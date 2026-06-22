@@ -12,6 +12,10 @@ import numpy as np
 from datetime import datetime
 from collections import deque
 from dearpygui import dearpygui as dpg
+import traceback
+from src.logging_config import setup_logging
+
+logger = setup_logging()
 
 # ================== 1. 核心动作数据库 ==================
 ACTION_DB = {
@@ -83,7 +87,7 @@ def get_ptr(pm, base, offsets):
         addr = pm.read_longlong(base)
         for o in offsets[:-1]: addr = pm.read_longlong(addr + o)
         return addr + offsets[-1]
-    except:
+    except Exception:
         return 0
 
 
@@ -94,9 +98,8 @@ def find_monster(pm, base):
             try:
                 hp = pm.read_longlong(ptr + 0x7670)
                 if pm.read_float(hp + 0x60) > 500: return ptr
-            except:
+            except Exception:
                 pass
-    return 0
 
 
 def data_logger_thread(pm, p_base, m_base, zone_base):
@@ -143,8 +146,8 @@ def data_logger_thread(pm, p_base, m_base, zone_base):
                 csv.writer(f).writerow(
                     [time.time(), hp_percent, shared_state['phase'], shared_state['is_enraged'], dist, rel_angle,
                      shared_state['posture'], action_id])
-        except:
-            pass
+        except Exception:
+            logger.warning(f"录制线程异常:\n{traceback.format_exc()}")
         time.sleep(0.1)
 
 
@@ -154,8 +157,10 @@ class Ultimate_Radar_UI:
         self.last_action, self.last_ai_time = -1, 0
         try:
             self.ai_model = joblib.load("models/fatalis_ai_model.pkl")
+            logger.info("成功加载 AI 预测模型")
             print("✅ 成功加载 AI 预测模型！")
-        except:
+        except Exception:
+            logger.error(f"模型加载失败:\n{traceback.format_exc()}")
             self.ai_model = None
 
         dpg.create_context()
@@ -165,7 +170,8 @@ class Ultimate_Radar_UI:
                     dpg.add_font_range_hint(dpg.mvFontRangeHint_Chinese_Simplified_Common)
                     dpg.add_font_range_hint(dpg.mvFontRangeHint_Default)
                 dpg.bind_font(font)
-            except:
+            except Exception:
+                logger.warning(f"字体加载异常:\n{traceback.format_exc()}")
                 print("⚠️ 中文字体加载异常")
 
         with dpg.window(label="Fatalis_God_Radar", width=420, height=350, no_title_bar=True, no_resize=True,
@@ -232,7 +238,7 @@ class Ultimate_Radar_UI:
 
                 # 只要正向计时器 > 0 且未触及上限，即判定为绝对发怒状态
                 shared_state['is_enraged'] = 1 if (0.0 < enrage_timer < enrage_max) else 0
-            except:
+            except Exception:
                 shared_state['is_enraged'] = 0
             # ========================================================
 
@@ -306,8 +312,8 @@ class Ultimate_Radar_UI:
 
             self.last_action = action
 
-        except:
-            pass
+        except Exception:
+            logger.error(f"UI 刷新异常:\n{traceback.format_exc()}")
 
     def run(self):
         while dpg.is_dearpygui_running(): self.update_logic(); dpg.render_dearpygui_frame()
@@ -317,7 +323,8 @@ class Ultimate_Radar_UI:
 def main():
     try:
         pm = pymem.Pymem("MonsterHunterWorld.exe")
-    except:
+    except Exception:
+        logger.error(f"游戏进程连接失败:\n{traceback.format_exc()}")
         return print("未找到游戏进程")
     base = pymem.process.module_from_name(pm.process_handle, "MonsterHunterWorld.exe").lpBaseOfDll
     PLAYER, MONSTER, ZONE = base + 0x050139A0, base + 0x051238C8, base + 0x0500ECA0

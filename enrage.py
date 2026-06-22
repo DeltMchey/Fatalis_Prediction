@@ -2,6 +2,7 @@ import pymem
 import pymem.process
 import time
 import os
+from src.config.offsets import OFFSETS
 
 
 def get_ptr(pm, base, offsets):
@@ -14,12 +15,18 @@ def get_ptr(pm, base, offsets):
 
 
 def find_monster(pm, base):
-    for i in range(10):
-        ptr = get_ptr(pm, base, [0x698, i * 0x8, 0x138, 0])
+    for i in range(OFFSETS.MONSTER_MAX_SLOTS):
+        ptr = get_ptr(pm, base, [
+            OFFSETS.MONSTER_LIST_FIRST,
+            i * OFFSETS.MONSTER_LIST_STRIDE,
+            OFFSETS.MONSTER_LIST_NEXT,
+            OFFSETS.MONSTER_LIST_TERMINAL,
+        ])
         if ptr:
             try:
-                hp = pm.read_longlong(ptr + 0x7670)
-                if pm.read_float(hp + 0x60) > 500: return ptr
+                hp = pm.read_longlong(ptr + OFFSETS.MONSTER_HP_BASE)
+                if pm.read_float(hp + OFFSETS.HP_MAX) > OFFSETS.MONSTER_MIN_HP:
+                    return ptr
             except:
                 pass
     return 0
@@ -34,7 +41,7 @@ def scan_enrage_structure():
         return
 
     base = pymem.process.module_from_name(pm.process_handle, "MonsterHunterWorld.exe").lpBaseOfDll
-    MONSTER_BASE = base + 0x051238C8
+    MONSTER_BASE = base + OFFSETS.MONSTER_BASE
 
     # 我们要扫描的内部偏移量列表 (每 4 个字节是一个 Float)
     # 扫描从 0x0 到 0x28 的所有抽屉
@@ -48,7 +55,7 @@ def scan_enrage_structure():
 
         if monster_ptr != 0:
             # 定位到发怒状态的绝对地址
-            enrage_struct_addr = monster_ptr + 0x1BE30
+            enrage_struct_addr = monster_ptr + OFFSETS.ENRAGE_STRUCT
 
             # 清屏，让数据在原地刷新，方便肉眼观察
             os.system('cls' if os.name == 'nt' else 'clear')

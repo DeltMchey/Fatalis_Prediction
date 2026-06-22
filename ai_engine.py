@@ -24,6 +24,7 @@ from src.config.actions import (
     DOWN_IDS, SCRIPTED_IDS, MINOR_AND_PASSIVE,
     NOVA_THRESHOLDS,
 )
+from src.config.offsets import OFFSETS
 
 # 🌟 剔除了废弃的 enrage_end_time
 shared_state = {
@@ -45,12 +46,18 @@ def get_ptr(pm, base, offsets):
 
 
 def find_monster(pm, base):
-    for i in range(10):
-        ptr = get_ptr(pm, base, [0x698, i * 0x8, 0x138, 0])
+    for i in range(OFFSETS.MONSTER_MAX_SLOTS):
+        ptr = get_ptr(pm, base, [
+            OFFSETS.MONSTER_LIST_FIRST,
+            i * OFFSETS.MONSTER_LIST_STRIDE,
+            OFFSETS.MONSTER_LIST_NEXT,
+            OFFSETS.MONSTER_LIST_TERMINAL,
+        ])
         if ptr:
             try:
-                hp = pm.read_longlong(ptr + 0x7670)
-                if pm.read_float(hp + 0x60) > 500: return ptr
+                hp = pm.read_longlong(ptr + OFFSETS.MONSTER_HP_BASE)
+                if pm.read_float(hp + OFFSETS.HP_MAX) > OFFSETS.MONSTER_MIN_HP:
+                    return ptr
             except Exception:
                 pass
 
@@ -63,12 +70,14 @@ def data_logger_thread(pm, p_base, m_base, zone_base):
             time.sleep(1);
             continue
         try:
-            zone_addr = get_ptr(pm, zone_base, [0xAED0])
-            if zone_addr == 0 or pm.read_int(zone_addr) != 417:
+            zone_addr = get_ptr(pm, zone_base, [OFFSETS.ZONE_OFFSET])
+            if zone_addr == 0 or pm.read_int(zone_addr) != OFFSETS.ZONE_FATALIS:
                 time.sleep(1);
                 continue
 
-            player = get_ptr(pm, p_base, [0x50, 0xC0, 0x670])
+            player = get_ptr(pm, p_base, [
+                OFFSETS.PLAYER_CHAIN_1, OFFSETS.PLAYER_CHAIN_2, OFFSETS.PLAYER_COORDS,
+            ])
             monster = find_monster(pm, m_base)
             if not player or not monster: continue
 
@@ -80,12 +89,12 @@ def data_logger_thread(pm, p_base, m_base, zone_base):
                 file_created = True
 
             p_coords = [pm.read_float(player + i * 4) for i in range(3)]
-            m_coords = [pm.read_float(monster + 0x160 + i * 4) for i in range(3)]
-            m_quat = [pm.read_float(monster + 0x170 + i * 4) for i in range(4)]
-            hp_ptr = pm.read_longlong(monster + 0x7670)
-            hp_percent = pm.read_float(hp_ptr + 0x64) / pm.read_float(hp_ptr + 0x60)
+            m_coords = [pm.read_float(monster + OFFSETS.MONSTER_COORDS + i * 4) for i in range(3)]
+            m_quat = [pm.read_float(monster + OFFSETS.MONSTER_QUAT + i * 4) for i in range(4)]
+            hp_ptr = pm.read_longlong(monster + OFFSETS.MONSTER_HP_BASE)
+            hp_percent = pm.read_float(hp_ptr + OFFSETS.HP_CURRENT) / pm.read_float(hp_ptr + OFFSETS.HP_MAX)
 
-            action_id = pm.read_int(monster + 0x6278)
+            action_id = pm.read_int(monster + OFFSETS.MONSTER_ACTION_ID)
             with lock:
                 action_buffer.append(action_id)
 
@@ -146,10 +155,10 @@ class Ultimate_Radar_UI:
 
     def update_logic(self):
         try:
-            zone_addr = get_ptr(self.pm, self.zone_base, [0xAED0])
+            zone_addr = get_ptr(self.pm, self.zone_base, [OFFSETS.ZONE_OFFSET])
 
             # 🌟 核心防污染逻辑：回集会所彻底清除内存数据
-            if zone_addr == 0 or self.pm.read_int(zone_addr) != 417:
+            if zone_addr == 0 or self.pm.read_int(zone_addr) != OFFSETS.ZONE_FATALIS:
                 shared_state.update(
                     {'posture': 1, 'phase': 1, 'is_enraged': 0, 'hp_initialized': False,
                      'nova_warning': False})
@@ -162,12 +171,14 @@ class Ultimate_Radar_UI:
                 return
 
             monster = find_monster(self.pm, self.m_base)
-            player = get_ptr(self.pm, self.p_base, [0x50, 0xC0, 0x670])
+            player = get_ptr(self.pm, self.p_base, [
+                OFFSETS.PLAYER_CHAIN_1, OFFSETS.PLAYER_CHAIN_2, OFFSETS.PLAYER_COORDS,
+            ])
             if not monster or not player: return
 
             p_coords = [self.pm.read_float(player + i * 4) for i in range(3)]
-            m_coords = [self.pm.read_float(monster + 0x160 + i * 4) for i in range(3)]
-            m_quat = [self.pm.read_float(monster + 0x170 + i * 4) for i in range(4)]
+            m_coords = [self.pm.read_float(monster + OFFSETS.MONSTER_COORDS + i * 4) for i in range(3)]
+            m_quat = [self.pm.read_float(monster + OFFSETS.MONSTER_QUAT + i * 4) for i in range(4)]
             dist = math.sqrt((p_coords[0] - m_coords[0]) ** 2 + (p_coords[2] - m_coords[2]) ** 2)
             monster_yaw = math.degrees(math.atan2(2.0 * (m_quat[1] * m_quat[3] + m_quat[0] * m_quat[2]),
                                                   1.0 - 2.0 * (m_quat[0] ** 2 + m_quat[1] ** 2)))
@@ -177,17 +188,17 @@ class Ultimate_Radar_UI:
             raw_action = action_buffer[-1] if action_buffer else -1
             action = ACTION_MAPPING.get(raw_action, raw_action)
 
-            hp_ptr = self.pm.read_longlong(monster + 0x7670)
-            hp_percent = self.pm.read_float(hp_ptr + 0x64) / self.pm.read_float(hp_ptr + 0x60)
+            hp_ptr = self.pm.read_longlong(monster + OFFSETS.MONSTER_HP_BASE)
+            hp_percent = self.pm.read_float(hp_ptr + OFFSETS.HP_CURRENT) / self.pm.read_float(hp_ptr + OFFSETS.HP_MAX)
             shared_state['phase'] = 1 if hp_percent > 0.78 else (2 if hp_percent > 0.50 else 3)
 
             # ========================================================
             # 1. 🌟 物理级发怒硬读取 (精确对接怪猎底层引擎秒表)
             # ========================================================
             try:
-                # 定位到发怒结构体 (+0x1BE30) 并读取内部秒表 (+0x24) 和 上限 (+0x28)
-                enrage_timer = self.pm.read_float(monster + 0x1BE30 + 0x24)
-                enrage_max = self.pm.read_float(monster + 0x1BE30 + 0x28)
+                # 定位到发怒结构体并读取内部秒表和上限 (offsets from src/config/offsets.py)
+                enrage_timer = self.pm.read_float(monster + OFFSETS.ENRAGE_STRUCT + OFFSETS.ENRAGE_TIMER)
+                enrage_max = self.pm.read_float(monster + OFFSETS.ENRAGE_STRUCT + OFFSETS.ENRAGE_MAX)
 
                 # 只要正向计时器 > 0 且未触及上限，即判定为绝对发怒状态
                 shared_state['is_enraged'] = 1 if (0.0 < enrage_timer < enrage_max) else 0
@@ -280,7 +291,7 @@ def main():
         logger.error(f"游戏进程连接失败:\n{traceback.format_exc()}")
         return print("未找到游戏进程")
     base = pymem.process.module_from_name(pm.process_handle, "MonsterHunterWorld.exe").lpBaseOfDll
-    PLAYER, MONSTER, ZONE = base + 0x050139A0, base + 0x051238C8, base + 0x0500ECA0
+    PLAYER, MONSTER, ZONE = base + OFFSETS.PLAYER_BASE, base + OFFSETS.MONSTER_BASE, base + OFFSETS.ZONE_BASE
     threading.Thread(target=data_logger_thread, args=(pm, PLAYER, MONSTER, ZONE), daemon=True).start()
     Ultimate_Radar_UI(pm, PLAYER, MONSTER, ZONE).run()
 

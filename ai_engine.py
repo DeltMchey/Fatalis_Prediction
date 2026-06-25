@@ -23,6 +23,7 @@ from src.config.actions import (
     P1_ONLY_IDS, P2_PLUS_IDS, P3_ONLY_IDS,
     DOWN_IDS, SCRIPTED_IDS, MINOR_AND_PASSIVE,
     NOVA_THRESHOLDS,
+    POSTURE_STAND, POSTURE_PRONE, POSTURE_FLY,
 )
 from src.config.offsets import OFFSETS
 
@@ -219,12 +220,11 @@ class Ultimate_Radar_UI:
 
             # 2. 绝对姿态状态机 (包含头硬修复)
             if action != self.last_action and action != -1:
-                if action in {115, 116, 121, 122, 129, 119, 98, 99, 68, 69, 70, 71, 72, 149, 150, 151, 32, 19, 197, 219,
-                              222}:
+                if action in POSTURE_STAND:
                     shared_state['posture'] = 1
-                elif action in {138, 49, 50, 51, 52, 73, 30, 74, 75}:
+                elif action in POSTURE_PRONE:
                     shared_state['posture'] = 0
-                elif action in {107, 108, 167, 179}:
+                elif action in POSTURE_FLY:
                     shared_state['posture'] = 2
 
             dpg.set_value(self.text_state,

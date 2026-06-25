@@ -13,6 +13,7 @@ def clean_combat_data():
     # ==================== 动作分类与映射集 (从 src/config/actions.py 导入) ====================
     from src.config.actions import (
         ACTION_MAPPING, MINOR_AND_PASSIVE, SCRIPTED_IDS, DOWN_IDS,
+        POSTURE_STAND, POSTURE_PRONE, POSTURE_FLY,
     )
 
     EXCLUDE_TARGETS = MINOR_AND_PASSIVE | SCRIPTED_IDS
@@ -46,12 +47,11 @@ def clean_combat_data():
             # ----------------------------------------------------
             # 只有当【合并后的主动作】发生变化时，才触发布尔判定
             if last_mapped_action != -1 and action_id != last_mapped_action:
-                if action_id in {115, 116, 121, 122, 129, 119, 98, 99, 68, 69, 70, 71, 72, 149, 150, 151, 32, 19, 197,
-                                 219, 222}:
+                if action_id in POSTURE_STAND:
                     current_posture = 1
-                elif action_id in {138, 49, 50, 51, 52, 73, 30, 74, 75}:
+                elif action_id in POSTURE_PRONE:
                     current_posture = 0
-                elif action_id in {107, 108, 167, 179}:
+                elif action_id in POSTURE_FLY:
                     current_posture = 2
 
             if action_id in SCRIPTED_IDS:

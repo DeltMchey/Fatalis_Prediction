@@ -1,35 +1,65 @@
 Read:
 
-* memory-bank/*
-* PROJECT_ANALYSIS.md
-* Tech_debt.md
-* Refactoring_roadmap.md
+- memory-bank/*
+- PROJECT_ANALYSIS.md
+- Project_map.md
+- Tech_debt.md
+- Refactoring_roadmap.md
 
 Current Phase:
-P2 — High Priority Technical Debt Remediation
+P3 — Testing and Validation Framework
 
-Your task is to identify all P2 tasks.
+Your task is to perform a P3 readiness assessment.
+
+Do NOT modify any code.
+
+Objectives:
+
+1. Analyze the current repository structure.
+2. Identify all modules suitable for automated testing.
+3. Identify modules that require mocking.
+4. Identify modules that depend on game memory or external state.
+5. Propose a testing strategy.
+
+For each module provide:
+
+- Testability score (1-5)
+- Recommended test type
+    - Unit Test
+    - Integration Test
+    - Smoke Test
+    - Manual Verification
+- Dependencies
+- Risk level
+
+Generate:
+
+1. P3_EXECUTION_PLAN.md
+2. TEST_COVERAGE_MAP.md
+3. TEST_PRIORITY_LIST.md
 
 Requirements:
 
-1. Use the roadmap as the source of truth.
-2. Exclude all P3/P4/P5 work.
-3. Do not modify code yet.
+- Use Memory Bank as source of truth.
+- Do not propose P4 architecture changes.
+- Do not modify Python logic.
+- Do not generate tests yet.
 
-For each P2 task provide:
+Stop after analysis.
 
-* Objective
-* Affected files
-* Risk level
-* Estimated effort
-* Validation strategy
+Based on the P3 analysis:
 
-Hard Constraints:
+Classify all modules into:
 
-* No architecture refactoring
-* No module decomposition
-* No behavior changes
-* No model changes
-* No gameplay changes
+Tier 1:
+Easy to test
 
-Output a prioritized execution plan only.
+Tier 2:
+Requires mocking
+
+Tier 3:
+Manual verification only
+
+Provide execution order.
+
+Do not create tests yet.

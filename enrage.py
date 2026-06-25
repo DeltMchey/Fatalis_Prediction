@@ -3,6 +3,9 @@ import pymem.process
 import time
 import os
 from src.config.offsets import OFFSETS
+from src.logging_config import setup_logging
+
+logger = setup_logging()
 
 
 def get_ptr(pm, base, offsets):
@@ -10,7 +13,7 @@ def get_ptr(pm, base, offsets):
         addr = pm.read_longlong(base)
         for o in offsets[:-1]: addr = pm.read_longlong(addr + o)
         return addr + offsets[-1]
-    except:
+    except Exception:
         return 0
 
 
@@ -27,7 +30,7 @@ def find_monster(pm, base):
                 hp = pm.read_longlong(ptr + OFFSETS.MONSTER_HP_BASE)
                 if pm.read_float(hp + OFFSETS.HP_MAX) > OFFSETS.MONSTER_MIN_HP:
                     return ptr
-            except:
+            except Exception:
                 pass
     return 0
 
@@ -69,7 +72,7 @@ def scan_enrage_structure():
                     val = pm.read_float(enrage_struct_addr + offset)
                     # 格式化输出，对齐方便看
                     print(f" 偏移量 +0x{offset:02X} :  {val:10.3f}")
-                except:
+                except Exception:
                     print(f" 偏移量 +0x{offset:02X} :  [读取错误]")
 
             print("=========================================")

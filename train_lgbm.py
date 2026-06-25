@@ -5,14 +5,20 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import joblib
+from src.logging_config import setup_logging
+
+logger = setup_logging()
 
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei']
 plt.rcParams['axes.unicode_minus'] = False
 
 def train_fatalis_ai():
     print("🔄 正在加载纯粹观测流战斗数据集...")
-    try: df = pd.read_csv("data/ML_Ready_Dataset.csv")
-    except: return print("❌ 找不到 data/ML_Ready_Dataset.csv！")
+    try:
+        df = pd.read_csv("data/ML_Ready_Dataset.csv")
+    except Exception:
+        logger.error("找不到 data/ML_Ready_Dataset.csv")
+        return print("❌ 找不到 data/ML_Ready_Dataset.csv！")
 
     action_counts = df['next_action'].value_counts()
     valid_actions = action_counts[action_counts >= 3].index

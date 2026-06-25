@@ -6,9 +6,9 @@
 
 | Phase | Name | Status | Est. Days | Key Deliverables | Tag |
 |-------|------|--------|-----------|------------------|-----|
-| **P1** | 项目优化 (Project Standardization) | **Active** | 2 | README, .gitignore, requirements.txt, directory structure | v0.1.0 |
-| P2 | P0 修复 (Critical Fixes) | Planned | 3 | Logging, unified actions.py, centralized offsets.py | v0.2.0 |
-| P3 | 测试体系 (Test Safety Net) | Planned | 3 | Test suite (≥60% coverage), GitHub Actions CI | v0.3.0 |
+| **P1** | 项目优化 (Project Standardization) | **Complete** | 2 | README, .gitignore, requirements.txt, directory structure | v0.1.0 |
+| **P2** | P0 修复 (Critical Fixes) | **Complete** | 3 | Logging, unified actions.py, centralized offsets.py, posture FSM, bare except sweep | v0.2.0 |
+| P3 | 测试体系 (Test Safety Net) | **Active** | 3 | Test suite (≥60% coverage), GitHub Actions CI | v0.3.0 |
 | P4 | 架构重构 (Architecture Refactor) | Planned | 5 | src/core/, src/data/, src/model/, src/ui/, main.py | v0.4.0 |
 | P5 | 模型工程化 (Model Engineering) | Planned | 4 | Model versioning, incremental learning, docs, GitHub Release | v1.0.0 |
 
@@ -37,13 +37,18 @@
 - No changes to feature engineering
 - No architecture refactoring
 
-## P2 — Critical Fixes (Planned)
+## P2 — Critical Fixes (Complete ✅)
 
-See `Tech_debt.md` items #1, #2, #3.
+See `Tech_debt.md` items #1, #2, #3. Extended with audit findings P2.4–P2.6.
 
-- [ ] Replace all `except: pass` with structured logging (#3)
-- [ ] Unify ACTION_MAPPING into single source of truth (#2)
-- [ ] Centralize memory offsets into config (#1)
+- [x] Replace all `except: pass` with structured logging (#3) → `ea143d5`
+- [x] Unify ACTION_MAPPING into single source of truth (#2) → `43bfcff`
+- [x] Centralize memory offsets into config (#1) → `cb4d218`
+- [x] Unify posture FSM transition sets (P2.4) → uncommitted
+- [x] Fix `train_lgbm.py` bare except (P2.5) → uncommitted
+- [x] Fix `enrage.py` bare except (P2.6) → uncommitted
+
+**Closure report**: `docs/P2_CLOSURE_REPORT.md`
 
 ## P3 — Test Safety Net (Planned)
 
@@ -75,9 +80,9 @@ Sequential extraction from `ai_engine.py`:
 
 ## Current State Summary
 
-- **Phase**: P1 (Project Standardization)
+- **Phase**: P3 (Test Safety Net) — active
 - **Project runs**: Yes — `python ai_engine.py` works with the game
 - **Tests**: None
 - **CI/CD**: None
-- **Version control**: Not yet initialized (`git init` pending)
-- **Documentation**: Analysis docs exist (Project_map.md, Tech_debt.md, Refactoring_roadmap.md, PROJECT_ANALYSIS.md); no user-facing docs
+- **Version control**: Git initialized, P1+P2 work committed (P2.4–P2.6 uncommitted)
+- **Documentation**: User-facing: README.md, CHANGELOG.md. Analysis: P2_execution_plan.md, P2_doublecheck_report.md, docs/P2_CLOSURE_REPORT.md. Memory Bank: 6 files.

@@ -1,0 +1,60 @@
+# P3.1: CI 测试工作流
+# 每次 push 或 PR 到 master/main 时运行 pytest + coverage
+
+name: Test
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  test:
+    name: "Python ${{ matrix.python-version }} / ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install test dependencies (cross-platform)
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov
+          # 跨平台科学计算栈
+          pip install numpy pandas scikit-learn lightgbm matplotlib joblib
+
+      - name: Install Windows-only dependencies
+        if: runner.os == 'Windows'
+        run: |
+          pip install Pymem==1.14.0 dearpygui==2.3
+
+      - name: Check import — core packages
+        run: |
+          python -c "import numpy, pandas, sklearn, lightgbm, matplotlib, joblib; print('Core imports OK')"
+
+      - name: Run pytest with coverage
+        run: |
+          pytest --cov --cov-report=term --cov-report=xml --cov-report=html -v
+
+      - name: Upload coverage to artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: |
+            htmlcov/
+            coverage.xml
+          retention-days: 7

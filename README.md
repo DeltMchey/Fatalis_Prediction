@@ -2,8 +2,10 @@
 
 > AI-assisted hunting overlay for **Monster Hunter World** — predicts Fatalis's next attack in real-time.
 
-[![Phase](https://img.shields.io/badge/phase-P1%20Standardization-blue)](#roadmap)
-[![Python](https://img.shields.io/badge/python-3.x-blue.svg)](https://www.python.org/)
+[![Phase](https://img.shields.io/badge/phase-P3%20Test%20Safety%20Net-green)](#roadmap)
+[![Tests](https://img.shields.io/badge/tests-182%20passed-brightgreen)](#roadmap)
+[![Coverage](https://img.shields.io/badge/coverage-60%25-brightgreen)](#roadmap)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## What It Does
@@ -75,7 +77,7 @@ BlackDragon/
 │
 ├── memory-bank/          # Project context (6 files)
 ├── archive/              # Deprecated files (mod.py)
-├── tests/                # Test directory (manual checklist)
+├── tests/                # Test suite (10 files, 182 tests, pytest + coverage)
 ├── requirements.txt
 ├── CHANGELOG.md
 └── .gitignore
@@ -126,9 +128,9 @@ Pure ML can output physically impossible predictions. The hard filter guarantees
 
 | Phase | Name | Status |
 |-------|------|--------|
-| P1 | Project Standardization | ✅ Active |
-| P2 | Critical Fixes (logging, offset centralization) | Planned |
-| P3 | Test Safety Net (≥60% coverage, CI) | Planned |
+| P1 | Project Standardization | ✅ Done |
+| P2 | Critical Fixes (logging, offset centralization) | ✅ Done |
+| P3 | Test Safety Net (182 tests, 60% coverage, CI) | ✅ Done |
 | P4 | Architecture Refactor (modular src/) | Planned |
 | P5 | Model Engineering (versioning, incremental learning) | Planned |
 

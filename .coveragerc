@@ -1,0 +1,32 @@
+# P3.1: Coverage 配置
+[run]
+branch = True
+source =
+    .
+    src
+omit =
+    .venv/*
+    tests/*
+    archive/*
+    __pycache__/*
+    setup.py
+
+[report]
+# 终端输出格式
+show_missing = True
+skip_covered = False
+
+# 排除被认为不可测试的行
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    def __str__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+    @abstractmethod
+
+[html]
+# HTML 报告输出目录
+directory = htmlcov

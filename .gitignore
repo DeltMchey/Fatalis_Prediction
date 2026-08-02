@@ -23,6 +23,11 @@ models/*.png
 # Logs
 *.log
 
+# Coverage (temporary data)
+.coverage
+htmlcov/
+coverage.xml
+
 # Temporary files
 *.tmp
 *.bak

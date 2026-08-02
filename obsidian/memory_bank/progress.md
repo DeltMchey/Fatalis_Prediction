@@ -8,7 +8,7 @@
 |-------|------|--------|-----------|------------------|-----|
 | **P1** | 项目优化 (Project Standardization) | **Complete** | 2 | README, .gitignore, requirements.txt, directory structure | v0.1.0 |
 | **P2** | P0 修复 (Critical Fixes) | **Complete** | 3 | Logging, unified actions.py, centralized offsets.py, posture FSM, bare except sweep | v0.2.0 |
-| P3 | 测试体系 (Test Safety Net) | **Active** | 3 | Test suite (≥60% coverage), GitHub Actions CI | v0.3.0 |
+| P3 | 测试体系 (Test Safety Net) | **Complete** | 3 | 182 tests (60% coverage), GitHub Actions CI | v0.3.0 |
 | P4 | 架构重构 (Architecture Refactor) | Planned | 5 | src/core/, src/data/, src/model/, src/ui/, main.py | v0.4.0 |
 | P5 | 模型工程化 (Model Engineering) | Planned | 4 | Model versioning, incremental learning, docs, GitHub Release | v1.0.0 |
 
@@ -50,12 +50,19 @@ See `Tech_debt.md` items #1, #2, #3. Extended with audit findings P2.4–P2.6.
 
 **Closure report**: `docs/P2_CLOSURE_REPORT.md`
 
-## P3 — Test Safety Net (Planned)
+## P3 — Test Safety Net (Complete ✅)
 
-- [ ] Extract testable functions from core logic
-- [ ] Write unit tests for: action mapping, posture FSM, phase filter, Nova logic
-- [ ] Set up GitHub Actions CI with pytest
-- [ ] Target: ≥60% overall coverage, ≥90% on core logic
+**Completion date**: 2026-08-02
+
+- [x] P3.1: Testing Infrastructure — pytest.ini, .coveragerc, CI workflow, conftest.py, 17 infrastructure tests
+- [x] P3.2: Config Module Tests — test_actions (20), test_offsets (14), test_logging (11) → config 100%
+- [x] P3.3: Core Logic Tests — 8 pure functions extracted, test_math_logic (27), test_phase_filter (32), test_nova (26)
+- [x] P3.4: Integration Tests — test_data_upgrade (11), test_data_cleaner (19), test_train_lgbm (5)
+- [x] P3.5: CI Finalization — README badges, changelog, closure report
+- [x] Coverage: 60% overall, ai_engine.py 43%, config modules 100%, data pipeline modules 100%
+- [x] All 182 tests pass, CI compatible with Windows + Linux, Python 3.11/3.12
+
+**Closure report**: `P3_CLOSURE_REPORT.md`
 
 ## P4 — Architecture Refactor (Planned)
 
@@ -80,9 +87,10 @@ Sequential extraction from `ai_engine.py`:
 
 ## Current State Summary
 
-- **Phase**: P3 (Test Safety Net) — active
+- **Phase**: P3 (Test Safety Net) — complete; P4 (Architecture Refactor) — planned next
 - **Project runs**: Yes — `python ai_engine.py` works with the game
-- **Tests**: None
-- **CI/CD**: None
-- **Version control**: Git initialized, P1+P2 work committed (P2.4–P2.6 uncommitted)
-- **Documentation**: User-facing: README.md, CHANGELOG.md. Analysis: P2_execution_plan.md, P2_doublecheck_report.md, docs/P2_CLOSURE_REPORT.md. Memory Bank: 6 files.
+- **Tests**: **182** (10 test files, 100% pass rate)
+- **Coverage**: **60%** overall; 100% config + data pipeline; 43% ai_engine (UI/thread code requires P4)
+- **CI/CD**: GitHub Actions (pytest + coverage on Windows/Ubuntu, Python 3.11/3.12)
+- **Version control**: P1+P2 committed; P2.4–P2.6 + all P3 uncommitted (working tree)
+- **Documentation**: User-facing: README.md, CHANGELOG.md (updated to v0.3.0). Analysis: P3_EXECUTION_PLAN.md, TEST_COVERAGE_MAP.md, P3_3_REVIEW.md, P3_3_TEST_RESULTS.md, P3_CLOSURE_REPORT.md. Memory Bank: 6 files (obsidian/memory_bank/)

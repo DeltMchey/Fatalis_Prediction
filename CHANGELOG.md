@@ -5,6 +5,75 @@ All notable changes to the BlackDragon project.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.3.0-test-safety-net] — 2026-08-02
+
+### Added (P3 — Test Safety Net)
+
+- **P3.1: Testing Infrastructure**
+  - `pytest.ini` — pytest config (testpaths, pythonpath, markers: slow/integration/smoke)
+  - `.coveragerc` — coverage config (branch=True, omit .venv/tests/archive)
+  - `.github/workflows/test.yml` — CI workflow (Ubuntu + Windows, Python 3.11/3.12)
+  - `tests/conftest.py` — 6 shared fixtures (sample_df, pipeline_workdir, etc.)
+  - `tests/test_infrastructure.py` — 17 self-verification tests
+
+- **P3.2: Config Module Tests (100% coverage)**
+  - `tests/test_actions.py` — 20 tests (ACTION_DB, ACTION_MAPPING, phase/posture sets)
+  - `tests/test_offsets.py` — 14 tests (GameOffsets dataclass, immutability)
+  - `tests/test_logging.py` — 11 tests (setup_logging, FileHandler, log output)
+
+- **P3.3: Core Logic Tests (8 pure functions extracted into ai_engine.py)**
+  - `tests/test_math_logic.py` — 27 tests (calc_distance_2d, calc_relative_angle, select_top_k)
+  - `tests/test_phase_filter.py` — 32 tests (filter_probs_by_phase, filter_probs_by_posture, renormalize_probs)
+  - `tests/test_nova.py` — 26 tests (evaluate_nova threshold FSM)
+
+- **P3.4: Integration Tests**
+  - `tests/test_data_cleaner.py` — 19 tests (ETL: action mapping, posture FSM, filtering, corrupted CSV)
+  - `tests/test_data_upgrade.py` — 11 tests (phase backfill, enrage window, column order, mixed files)
+  - `tests/test_train_lgbm.py` — 5 smoke tests (mini dataset training, model/file output, rare class filter, error logging)
+
+### Changed (P2 — Critical Fixes)
+
+- Unified all constants into `src/config/actions.py` + `src/config/offsets.py` (single source of truth)
+- Replaced all bare `except:` with structured logging via `src/logging_config.py`
+- Centralized posture FSM transition sets
+- Fixed remaining bare except in `train_lgbm.py` and `enrage.py`
+
+### Metrics
+
+| Metric | P3 Start | P3.3 | P3.4 (Final) |
+|--------|----------|------|--------------|
+| Total tests | 0 | 147 | **182** |
+| Pass rate | — | 100% | **100%** |
+| Overall coverage | ~8% | 29% | **60%** |
+| ai_engine.py | 0% | 43% | 43% |
+| config modules | 0% | 100% | 100% |
+| data pipeline (3 modules) | 0% | 0% | **100%** |
+
+---
+
+## [v0.2.0-p0-fixes] — 2026-06-25
+
+### Added
+
+- `src/config/actions.py` — unified action database (127 entries, 54 mappings, phase/posture sets)
+- `src/config/offsets.py` — centralized memory offsets (GameOffsets frozen dataclass, 20 fields)
+- `src/logging_config.py` — unified logging (FileHandler → blackdragon.log, WARNING level)
+
+### Changed
+
+- `ai_engine.py` — imports from `src.config.*`, all `except: pass` → `except Exception: logger.warning`
+- `data_cleaner.py` — imports from `src.config.actions`, unified ACTION_MAPPING
+- `train_lgbm.py` — bare except → logger.error
+- `enrage.py` — bare except → structured handling
+
+### Fixed
+
+- Duplicated ACTION_MAPPING across 3 files → single source of truth
+- Scattered memory offsets across 3 files → single GameOffsets dataclass
+- Silent error swallowing → all exceptions logged
+
+---
+
 ## [v0.1.0-project-init] — 2026-06-22
 
 ### Added

@@ -9,7 +9,7 @@
 | **P1** | 项目优化 (Project Standardization) | **Complete** | 2 | README, .gitignore, requirements.txt, directory structure | v0.1.0 |
 | **P2** | P0 修复 (Critical Fixes) | **Complete** | 3 | Logging, unified actions.py, centralized offsets.py, posture FSM, bare except sweep | v0.2.0 |
 | P3 | 测试体系 (Test Safety Net) | **Complete** | 3 | 182 tests (60% coverage), GitHub Actions CI | v0.3.0 |
-| P4 | 架构重构 (Architecture Refactor) | Planned | 5 | src/core/, src/data/, src/model/, src/ui/, main.py | v0.4.0 |
+| P4 | 架构重构 (Architecture Refactor) | **Active** | 5 | src/core/, src/data/, src/model/, src/ui/, main.py | v0.4.0 |
 | P5 | 模型工程化 (Model Engineering) | Planned | 4 | Model versioning, incremental learning, docs, GitHub Release | v1.0.0 |
 
 ## P1 — Project Standardization (Active)
@@ -64,15 +64,17 @@ See `Tech_debt.md` items #1, #2, #3. Extended with audit findings P2.4–P2.6.
 
 **Closure report**: `P3_CLOSURE_REPORT.md`
 
-## P4 — Architecture Refactor (Planned)
+## P4 — Architecture Refactor (Active 🔵)
+
+**P4 Step 1 complete (2026-08-02). Step 2 planned.**
 
 Sequential extraction from `ai_engine.py`:
-1. StateTracker → `src/core/state_tracker.py`
-2. MemoryReader → `src/core/memory_reader.py`
-3. CombatRecorder → `src/data/recorder.py`
-4. ActionPredictor → `src/model/predictor.py`
-5. OverlayUI → `src/ui/overlay.py`
-6. Main assembly → `main.py`
+- [x] **P4.1: StateTracker** → `src/core/state_tracker.py` — CombatStateTracker class, 50 tests, 100% coverage
+- [ ] **P4.2: MemoryReader** → `src/core/memory_reader.py`
+- [ ] **P4.3: ActionPredictor** → `src/model/predictor.py`
+- [ ] **P4.4: CombatRecorder** → `src/data/recorder.py`
+- [ ] **P4.5: OverlayUI** → `src/ui/overlay.py`
+- [ ] **P4.6: Main assembly** → `main.py`
 
 ## P5 — Model Engineering (Planned)
 
@@ -87,10 +89,10 @@ Sequential extraction from `ai_engine.py`:
 
 ## Current State Summary
 
-- **Phase**: P3 (Test Safety Net) — complete; P4 (Architecture Refactor) — planned next
+- **Phase**: P4 (Architecture Refactor) — active; P4 Step 1 complete, Step 2 planned
 - **Project runs**: Yes — `python ai_engine.py` works with the game
-- **Tests**: **182** (10 test files, 100% pass rate)
-- **Coverage**: **60%** overall; 100% config + data pipeline; 43% ai_engine (UI/thread code requires P4)
+- **Tests**: **232** (12 test files, 100% pass rate)
+- **Coverage**: **64%** overall; 100% config + data pipeline + state_tracker; 43% ai_engine (UI/thread code)
 - **CI/CD**: GitHub Actions (pytest + coverage on Windows/Ubuntu, Python 3.11/3.12)
-- **Version control**: P1+P2 committed; P2.4–P2.6 + all P3 uncommitted (working tree)
-- **Documentation**: User-facing: README.md, CHANGELOG.md (updated to v0.3.0). Analysis: P3_EXECUTION_PLAN.md, TEST_COVERAGE_MAP.md, P3_3_REVIEW.md, P3_3_TEST_RESULTS.md, P3_CLOSURE_REPORT.md. Memory Bank: 6 files (obsidian/memory_bank/)
+- **Version control**: P1+P2+P3 committed (v0.1.0, v0.2.0, v0.3.0 tags); P4 Step 1 pending commit
+- **Documentation**: User-facing: README.md, CHANGELOG.md. Analysis: P3_EXECUTION_PLAN.md, TEST_COVERAGE_MAP.md, P3_3_REVIEW.md, P3_3_TEST_RESULTS.md, P3_CLOSURE_REPORT.md. Memory Bank: 6 files (obsidian/memory_bank/)

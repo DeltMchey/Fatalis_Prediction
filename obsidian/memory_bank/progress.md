@@ -66,12 +66,12 @@ See `Tech_debt.md` items #1, #2, #3. Extended with audit findings P2.4–P2.6.
 
 ## P4 — Architecture Refactor (Active 🔵)
 
-**P4 Step 1 complete (2026-08-02). Step 2 planned.**
+**P4 Step 1–3 complete (2026-08-02). Step 4 pending.**
 
 Sequential extraction from `ai_engine.py`:
 - [x] **P4.1: StateTracker** → `src/core/state_tracker.py` — CombatStateTracker class, 50 tests, 100% coverage
-- [ ] **P4.2: MemoryReader** → `src/core/memory_reader.py`
-- [ ] **P4.3: ActionPredictor** → `src/model/predictor.py`
+- [x] **P4.2: MemoryReader** → `src/core/memory_reader.py` — 9 public methods, 27 tests, 100% coverage
+- [x] **P4.3: ActionPredictor** → `src/model/predictor.py` — model load + inference pipeline, 31 tests, 99% coverage
 - [ ] **P4.4: CombatRecorder** → `src/data/recorder.py`
 - [ ] **P4.5: OverlayUI** → `src/ui/overlay.py`
 - [ ] **P4.6: Main assembly** → `main.py`
@@ -89,10 +89,14 @@ Sequential extraction from `ai_engine.py`:
 
 ## Current State Summary
 
-- **Phase**: P4 (Architecture Refactor) — active; P4 Step 1 complete, Step 2 planned
+- **Phase**: P4 (Architecture Refactor) — active; P4 Step 1–3 complete, Step 4 pending
 - **Project runs**: Yes — `python ai_engine.py` works with the game
-- **Tests**: **232** (12 test files, 100% pass rate)
-- **Coverage**: **64%** overall; 100% config + data pipeline + state_tracker; 43% ai_engine (UI/thread code)
+- **Tests**: **290** (14 test files, 100% pass rate)
+- **Coverage**: **72%** overall; 100% config + data pipeline + state_tracker + memory_reader; 99% predictor; 43% ai_engine (UI/thread code)
+- **Extracted modules** (not yet wired):
+  - `src/core/state_tracker.py` — CombatStateTracker (156 lines, 50 tests, 100%)
+  - `src/core/memory_reader.py` — MemoryReader (183 lines, 27 tests, 100%)
+  - `src/model/predictor.py` — ActionPredictor (201 lines, 31 tests, 99%)
+- **Dual-track status**: `ai_engine.py` God Class still fully operational alongside 3 extracted modules
 - **CI/CD**: GitHub Actions (pytest + coverage on Windows/Ubuntu, Python 3.11/3.12)
-- **Version control**: P1+P2+P3 committed (v0.1.0, v0.2.0, v0.3.0 tags); P4 Step 1 pending commit
-- **Documentation**: User-facing: README.md, CHANGELOG.md. Analysis: P3_EXECUTION_PLAN.md, TEST_COVERAGE_MAP.md, P3_3_REVIEW.md, P3_3_TEST_RESULTS.md, P3_CLOSURE_REPORT.md. Memory Bank: 6 files (obsidian/memory_bank/)
+- **Version control**: P1+P2+P3+P4.1 committed; P4.2+P4.3 pending

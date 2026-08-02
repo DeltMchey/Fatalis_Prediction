@@ -2,11 +2,41 @@
 
 ## Current Phase
 
-**P4 Step 1 Complete → P4 Step 2 Planned (MemoryReader)**
+**P4 Step 3 Complete → P4 Step 4 Pending (Recorder)**
 
 ## Current Goal
 
-Architecture refactoring in progress. Step 1 (StateTracker extraction) complete. Next: Step 2 — MemoryReader extraction (encapsulate all pymem process memory reads).
+Architecture refactoring in progress. Steps 1–3 (StateTracker + MemoryReader + Predictor) complete. Next: Step 4 — Recorder extraction (daemon thread CSV recording).
+
+## Dual-Track Status
+
+| Track | Status | Description |
+|-------|--------|-------------|
+| **Legacy** | `ai_engine.py` (484 lines) | God Class still fully operational, zero modifications |
+| **Extracted** | `src/core/state_tracker.py` | CombatStateTracker — pure state management, 50 tests ✅ |
+| **Extracted** | `src/core/memory_reader.py` | MemoryReader — all pymem reads, 27 tests ✅ |
+| **Extracted** | `src/model/predictor.py` | ActionPredictor — model load + inference, 31 tests ✅ |
+| **Pending** | `src/data/recorder.py` | Step 4 — daemon recording thread |
+
+## What We Just Completed
+
+### P4 Step 3 — Predictor Extraction ✅
+
+- **Status**: ✅ Complete
+- **Deliverables**:
+  - `src/model/__init__.py` — model package init
+  - `src/model/predictor.py` (201 lines) — **ActionPredictor** class, 99% coverage
+  - `tests/test_predictor.py` — **31 tests**, all passed
+- **Design**: Encapsulates model loading + inference pipeline
+  - 1 public method: `predict(distance, angle, posture, prev_action, phase, enrage) → [(class_id, prob), ...]`
+  - 4 static methods migrated from P3.3: `filter_probs_by_phase`, `filter_probs_by_posture`, `renormalize_probs`, `select_top_k`
+  - 2 module-level constants: `_POSTURE_STAND_EXCLUDE` (15 IDs), `_POSTURE_PRONE_EXCLUDE` (37 IDs)
+  - Dependencies: `joblib` + `pandas` + `numpy` + lazy `src.config.actions`
+  - No pymem / dearpygui / threading / StateTracker / MemoryReader
+  - Model load failure → `_model = None` → `predict()` returns `[]`
+  - `predict()` returns raw (class_id, prob) tuples — ACTION_DB display formatting stays in caller (UI)
+- **Review**: P4 Step 3 Review APPROVED — 0 blocking issues, 2 non-blocking suggestions
+- **Constraint**: `ai_engine.py` untouched; P3.3 functions untouched (dual-track)
 
 ## What We Just Completed
 
@@ -75,11 +105,13 @@ P3.1–P3.5 are done. 182 tests, 100% pass, 60% overall coverage (100% on config
 
 | Metric | Value |
 |--------|-------|
-| Total tests | **232** (12 test files) |
+| Total tests | **290** (14 test files) |
 | Pass rate | 100% |
-| Overall coverage | **64%** |
+| Overall coverage | **72%** |
 | `ai_engine.py` coverage | **43%** |
 | `state_tracker.py` coverage | **100%** |
+| `memory_reader.py` coverage | **100%** |
+| `predictor.py` coverage | **99%** |
 | Config modules coverage | 100% (3/3 modules) |
 | Data pipeline coverage | 100% (3/3 modules) |
 | CI workflow | `.github/workflows/test.yml` (Windows + Ubuntu, Python 3.11/3.12) |
@@ -99,6 +131,8 @@ P3.1–P3.5 are done. 182 tests, 100% pass, 60% overall coverage (100% on config
 | `tests/test_data_cleaner.py` | 19 | P3.4 | ETL: mapping, posture FSM, filtering, corrupted CSV |
 | `tests/test_train_lgbm.py` | 5 | P3.4 | mini dataset training, model output, rare class filter |
 | `tests/test_state_tracker.py` | 50 | P4.1 | CombatStateTracker: init, math, phase, enrage, posture FSM, nova, zone reset |
+| `tests/test_memory_reader.py` | 27 | P4.2 | MemoryReader: pointer chains, zone, monster, player, HP, action, enrage |
+| `tests/test_predictor.py` | 31 | P4.3 | ActionPredictor: model load, predict, feature format, filters, top-k, edge cases |
 
 ## What Is Allowed Right Now
 
@@ -118,46 +152,39 @@ P3.1–P3.5 are done. 182 tests, 100% pass, 60% overall coverage (100% on config
 ## Success Criteria for P4
 
 - [x] P4.1: StateTracker extracted — `src/core/state_tracker.py`, 50 tests, 100% coverage
-- [ ] P4.2: MemoryReader extracted — `src/core/memory_reader.py`, mock pymem tests
-- [ ] P4.3: Predictor extracted — `src/model/predictor.py`, mini model tests
+- [x] P4.2: MemoryReader extracted — `src/core/memory_reader.py`, 27 tests, 100% coverage
+- [x] P4.3: Predictor extracted — `src/model/predictor.py`, 31 tests, 99% coverage
 - [ ] P4.4: Recorder extracted — `src/data/recorder.py`, mock injection tests
 - [ ] P4.5: OverlayUI extracted — `src/ui/overlay.py`, smoke tests
 - [ ] P4.6: Main assembly — `main.py` + `ai_engine.py` backward compat stub
 - [ ] Overall coverage ≥80%
 - [ ] Git tag: `v0.4.0-architecture-refactor`
 
-## Next Objective: P4 Step 2 MemoryReader Extraction
+## Next Objective: P4 Step 4 Recorder Extraction
 
-Encapsulate all pymem process memory reads into `src/core/memory_reader.py`:
-- `get_ptr` → `MemoryReader._follow_pointer_chain`
-- `find_monster` → `MemoryReader.find_monster`
-- Inline memory reads (coords, HP, action, enrage, zone) → typed methods
+Extract daemon recording thread into `src/data/recorder.py`:
+- `data_logger_thread` → `CombatRecorder` class
+- Injects MemoryReader + CombatStateTracker (not direct pymem)
+- CSV filename generation, header writing, 0.1s loop
+- `is_recording` flag gating, zone gating
 
 Sequential extraction from `ai_engine.py`:
 1. ✅ StateTracker → `src/core/state_tracker.py`
-2. 🔜 MemoryReader → `src/core/memory_reader.py`
-3. ActionPredictor → `src/model/predictor.py`
-4. CombatRecorder → `src/data/recorder.py`
+2. ✅ MemoryReader → `src/core/memory_reader.py`
+3. ✅ ActionPredictor → `src/model/predictor.py`
+4. 🔜 CombatRecorder → `src/data/recorder.py`
 5. OverlayUI → `src/ui/overlay.py`
 6. Main assembly → `main.py`
 
-## P2 Closure Summary
-
-P2 completed 2026-06-25. All 6 tasks done (3 roadmap + 3 audit extensions):
-- P2.1–P2.3: Committed (`ea143d5`, `43bfcff`, `cb4d218`)
-- P2.4–P2.6: Working tree (awaiting commit)
-- Zero bare `except:` in active code
-- All constants centralized in `src/config/`
-- Closure report: `obsidian/docs/P2_CLOSURE_REPORT.md`
-
 ## Current Blockers
 
-None. P4 Step 2 (MemoryReader) is ready to begin.
+None. P4 Step 4 (Recorder) is ready to begin.
 
 ## Recent Decisions
 
-- **P4 Step 1 completed**: CombatStateTracker extracted from shared_state dict — 50 tests, 100% coverage
-- StateTracker kept as standalone module (not yet wired into ai_engine.py) — wiring deferred to Step 2+
-- `shared_state['action_id']` confirmed dead code (never read/written) — dropped from StateTracker
-- `action_buffer` + `lock` deferred to Recorder step (threading concern, not StateTracker's)
-- P4 Step 1 Review: APPROVED with 3 non-blocking recommendations (posture return semantics doc, evaluate_nova diff test, triggered_novas readonly exposure)
+- **P4 Step 3 completed**: ActionPredictor extracted — model load + inference pipeline, 31 tests, 99% coverage
+- 4 P3.3 filter functions + 2 constants migrated to predictor.py (ai_engine.py copies retained for dual-track)
+- `predict()` returns raw (class_id, prob) tuples — no ACTION_DB for display names (UI does formatting)
+- Model load failure is silent (`_model=None`, `predict()` returns `[]`) — caller checks `is_loaded`
+- Mini LightGBM training in tests avoids LGBMClassifier.__init__ monkeypatching (sklearn API contract safe)
+- P4.3 Review: APPROVED with 2 suggestions (missing all-zero-prob scenario test, model load logging)

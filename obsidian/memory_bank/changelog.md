@@ -4,6 +4,43 @@
 
 ---
 
+### 2026-08-03 — P4 Step 5 Complete
+
+#### Phase
+P4 Architecture Refactoring (架构重构)
+
+#### Completed
+- **P4.5: OverlayUI Extraction**
+  - Created `src/ui/__init__.py`
+  - Created `src/ui/overlay.py` — `OverlayUI` class (289 lines)
+  - Created `tests/test_overlay.py` — 41 tests, 100% pass
+  - `overlay.py` achieves **100% branch coverage**
+  - `ai_engine.py` / all 4 existing P4 modules left untouched — dual-track maintained
+
+#### API
+- `OverlayUI(memory_reader, state_tracker, predictor, action_buffer, action_lock)`
+- `run()` — DPG event loop with try/finally for guaranteed destroy_context
+- `_compute_frame()` — pure logic, 0 DPG calls, 1:1 order match with original update_logic
+- `_apply_display()` — thin DPG layer (set_value / configure_item)
+- `_setup_dpg()` — DPG context + font + window + viewport + Win32 ctypes transparent overlay
+- `_compute_ai_display()` — nova warning / prediction throttle / ACTION_DB formatting
+- `last_action` dropped — StateTracker owns posture FSM cursor
+
+#### Design Decisions
+- Constructor: only stores 5 injected deps — zero DPG/ctypes side effects → testable without real window
+- `_compute_frame` structurally verified to contain no `dpg.` calls (regex test)
+- Win32 ctypes isolated to `_apply_win32_overlay()` method body — `import src.ui.overlay` cross-platform safe
+- AI prediction throttle (0.5s) kept in UI layer (`_last_ai_time`) — not a game logic concern
+- DPG text/color updates separated from computation → `_compute_frame` returns dict, `_apply_display` applies
+- CSV column display in state_text: no `posture` field (matching original)
+
+#### Review
+- P4 Step 5 Review: **APPROVED** — 0 blockers, 1 non-blocking observation (DPG configure_item order)
+
+#### Metrics
+- Tests: 324 → **365** (+41)
+- overlay.py coverage: **100%**
+- 5 of 6 modules extracted (StateTracker + MemoryReader + Predictor + Recorder + OverlayUI)
 ### 2026-08-03 — P4 Step 4 Complete
 
 #### Phase

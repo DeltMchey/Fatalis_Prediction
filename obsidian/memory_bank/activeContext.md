@@ -2,11 +2,11 @@
 
 ## Current Phase
 
-**P4 Step 4 Complete → P4 Step 5 Pending (OverlayUI)**
+**P4 Step 5 Complete → P4 Step 6 Pending (Integration)**
 
 ## Current Goal
 
-Architecture refactoring in progress. Steps 1–4 (StateTracker + MemoryReader + Predictor + Recorder) complete. Next: Step 5 — OverlayUI extraction (DearPyGui UI from `Ultimate_Radar_UI`).
+Architecture refactoring in progress. Steps 1–5 (all modules) complete. Next: Step 6 — Main assembly: wire `ai_engine.py main()` to use extracted modules (MemoryReader + StateTracker + Predictor + CombatRecorder + OverlayUI), remove duplicate logic, keep backward compat.
 
 ## Dual-Track Status
 
@@ -17,10 +17,28 @@ Architecture refactoring in progress. Steps 1–4 (StateTracker + MemoryReader +
 | **Extracted** | `src/core/memory_reader.py` | MemoryReader — all pymem reads, 27 tests ✅ |
 | **Extracted** | `src/model/predictor.py` | ActionPredictor — model load + inference, 31 tests ✅ |
 | **Extracted** | `src/data/recorder.py` | CombatRecorder — daemon recording thread, 34 tests ✅ |
-| **Pending** | `src/ui/overlay.py` | Step 5 — DearPyGui UI extraction |
+| **Extracted** | `src/ui/overlay.py` | OverlayUI — DearPyGui overlay, 41 tests ✅ |
+| **Pending** | `main.py` | Step 6 — Integration wiring |
 
 ## What We Just Completed
 
+#### P4 Step 5 — OverlayUI Extraction ✅
+
+- **Status**: ✅ Complete
+- **Deliverables**:
+  - `src/ui/__init__.py` — ui package init
+  - `src/ui/overlay.py` (289 lines) — **OverlayUI** class, 100% coverage
+  - `tests/test_overlay.py` — **41 tests**, all passed
+- **Design**: DearPyGui overlay extraction from `Ultimate_Radar_UI` (ai_engine.py L319–469)
+  - __init__ only stores injected dependencies (MemoryReader + StateTracker + Predictor + action_buffer + lock) — zero DPG/ctypes
+  - _compute_frame: pure logic, 0 DPG calls, 1:1 order match with original update_logic
+  - _apply_display: thin DPG application layer (set_value/configure_item)
+  - _setup_dpg: DPG context/font/window/viewport + Win32 ctypes transparent overlay
+  - _compute_ai_display: nova warning / prediction throttle / ACTION_DB formatting
+  - last_action dropped — StateTracker owns posture FSM cursor
+  - run() with try/finally for guaranteed dpg.destroy_context()
+- **Review**: P4 Step 5 Review **APPROVED** — 0 blockers, 1 non-blocking observation
+- **Constraint**: `ai_engine.py` / all 4 existing P4 modules untouched (dual-track)
 #### P4 Step 4 — Recorder Extraction ✅
 
 - **Status**: ✅ Complete
@@ -121,7 +139,7 @@ P3.1–P3.5 are done. 182 tests, 100% pass, 60% overall coverage (100% on config
 
 ## Current Test Metrics
 
-| Total tests | **324** (15 test files) |
+| Total tests | **365** (16 test files) |
 |--------|-------|
 | Pass rate | 100% |
 | Overall coverage | **72%** |
@@ -130,6 +148,7 @@ P3.1–P3.5 are done. 182 tests, 100% pass, 60% overall coverage (100% on config
 | `memory_reader.py` coverage | **100%** |
 | `predictor.py` coverage | **99%** |
 | `recorder.py` coverage | **100%** |
+| `overlay.py` coverage | **100%** |
 | Config modules coverage | 100% (3/3 modules) |
 | Data pipeline coverage | 100% (3/3 modules) |
 | CI workflow | `.github/workflows/test.yml` (Windows + Ubuntu, Python 3.11/3.12) |
@@ -154,6 +173,8 @@ P3.1–P3.5 are done. 182 tests, 100% pass, 60% overall coverage (100% on config
 
 | `tests/test_recorder.py` | 34 | P4.4 | CombatRecorder: header, gating, recording, buffer, lifecycle, structural |
 
+| `tests/test_overlay.py` | 41 | P4.5 | OverlayUI: zone gating, state updates, nova, prediction, throttle, display, DPG lifecycle |
+
 ## What Is Allowed Right Now
 
 - Extracting new modules from `ai_engine.py` into `src/core/`, `src/data/`, `src/model/`, `src/ui/`
@@ -174,37 +195,40 @@ P3.1–P3.5 are done. 182 tests, 100% pass, 60% overall coverage (100% on config
 - [x] P4.2: MemoryReader extracted — `src/core/memory_reader.py`, 27 tests, 100% coverage
 - [x] P4.3: Predictor extracted — `src/model/predictor.py`, 31 tests, 99% coverage
 - [x] P4.4: Recorder extracted — `src/data/recorder.py`, 34 tests, 100% coverage
-- [ ] P4.5: OverlayUI extracted — `src/ui/overlay.py`, smoke tests
+- [x] P4.5: OverlayUI extracted — `src/ui/overlay.py`, 41 tests, 100% coverage
 - [ ] P4.6: Main assembly — `main.py` + `ai_engine.py` backward compat stub
 - [ ] Overall coverage ≥80%
 - [ ] Git tag: `v0.4.0-architecture-refactor`
-## Next Objective: P4 Step 5 OverlayUI Extraction
+### Next Objective: P4 Step 6 Integration
 
-Extract DearPyGui UI from `Ultimate_Radar_UI` class into `src/ui/overlay.py`:
-- `Ultimate_Radar_UI.__init__` → OverlayUI constructor
-- `update_logic` (L358–465) → OverlayUI refresh method
-- DPG context, font, window, viewport setup → constructor
-- Inject StateTracker + Predictor (delegated from main)
-- Keep `ai_engine.py` backward compat stub
+Wire `ai_engine.py main()` to use the 5 extracted modules:
+- Create `MemoryReader(pm, base)` → shared instance
+- Create `CombatStateTracker()` → shared instance
+- Create `ActionPredictor("models/fatalis_ai_model.pkl")`
+- Create `CombatRecorder(memory_reader, state_tracker, buffer, lock)` → daemon thread
+- Create `OverlayUI(memory_reader, state_tracker, predictor, buffer, lock)` → `run()`
+- Remove duplicate logic from `ai_engine.py` (module-level functions, global state)
+- Keep `python ai_engine.py` runnable as backward compat stub
 
 Sequential extraction:
 1. ✅ StateTracker → `src/core/state_tracker.py`
 2. ✅ MemoryReader → `src/core/memory_reader.py`
 3. ✅ ActionPredictor → `src/model/predictor.py`
 4. ✅ CombatRecorder → `src/data/recorder.py`
-5. 🔜 OverlayUI → `src/ui/overlay.py`
-6. Main assembly → `main.py`
+5. ✅ OverlayUI → `src/ui/overlay.py`
+6. 🔜 Main assembly → `main.py`
 ## Current Blockers
 
-None. P4 Step 5 (OverlayUI) is ready to begin.
+None. P4 Step 6 (Integration) is ready to begin.
 
 ## Recent Decisions
 
-- **P4 Step 4 completed**: CombatRecorder extracted — daemon recording thread, 34 tests, 100% coverage
-- SF-1 fix: `run()` try boundary moved up to cover `_should_pause()` (exception scope parity with legacy `data_logger_thread`)
-- CombatRecorder injects MemoryReader + CombatStateTracker — no direct pymem or shared_state access
-- CSV columns single source of truth: `CombatRecorder._COLUMNS` (test imports from class to avoid drift)
-- Per-frame open/close CSV matches legacy behavior (crash-safe: data flushed every 0.1s)
-- Thread lifecycle: `start()` idempotent, `stop()` explicit, daemon thread, exception survival
-- P4.4 Review: APPROVED — 1 Should Fix (SF-1), applied
-- Full suite: 324 tests pass (MPLBACKEND=Agg; pre-existing Tcl environment issue on this machine)
+- **P4 Step 5 completed**: OverlayUI extracted — DearPyGui overlay, 41 tests, 100% coverage
+- `_compute_frame` is pure logic: 0 DPG calls (structurally verified by regex), 1:1 order match with original update_logic
+- `self.last_action` dropped — StateTracker owns posture FSM cursor internally
+- `_apply_win32_overlay` isolated to method body — `import src.ui.overlay` cross-platform safe (no module-level ctypes)
+- Constructor: only 5 injected deps stored (MemoryReader + StateTracker + Predictor + buffer + lock); zero DPG/ctypes
+- `run()` uses try/finally for guaranteed `dpg.destroy_context()` — improvement over original
+- P4.5 Review: APPROVED — 0 blockers, 1 non-blocking observation (DPG configure_item order, visually identical)
+- Full suite: 365 tests pass (MPLBACKEND=Agg; pre-existing Tcl environment issue on this machine)
+- All 5 modules extracted; 0 modifications to ai_engine.py

@@ -451,40 +451,42 @@ class TestApplyDisplay:
 # =============================================================================
 
 class TestDpgLifecycleSmoke:
-    def test_setup_dpg_calls_lifecycle(self, overlay):
-        """_setup_dpg 依次调用 DPG 生命周期函数并填充 widgets。"""
+    def test_run_creates_context_and_loops(self, overlay):
+        """run() 创建 DPG context + viewport + event loop，退出时销毁。"""
         with patch("src.ui.overlay.dpg") as mock_dpg, \
-                patch("src.ui.overlay.ctypes") as mock_ctypes:
+                patch("src.ui.overlay.ctypes") as mock_ctypes, \
+                patch("src.ui.fonts.dpg"):
             mock_ctypes.windll.user32.GetWindowLongW.return_value = 0
             mock_ctypes.windll.user32.GetSystemMetrics.return_value = 1920
-            overlay._setup_dpg()
+            mock_dpg.is_dearpygui_running.side_effect = [True, False]
+            overlay.update_logic = MagicMock()
+            overlay.run()
 
         mock_dpg.create_context.assert_called_once()
         mock_dpg.create_viewport.assert_called_once()
         mock_dpg.setup_dearpygui.assert_called_once()
         mock_dpg.show_viewport.assert_called_once()
+        mock_dpg.render_dearpygui_frame.assert_called_once()
+        mock_dpg.destroy_context.assert_called_once()
+        overlay.update_logic.assert_called_once()
         assert "text_state" in overlay._widgets
         assert "text_ai" in overlay._widgets
 
-    def test_setup_dpg_font_failure_logged(self, overlay, caplog):
-        """字体加载失败 → logger.warning，不中断。"""
+    def test_start_spawns_daemon_thread(self, overlay):
+        """start() 启动 daemon 线程运行 run()。"""
         with patch("src.ui.overlay.dpg") as mock_dpg, \
-                patch("src.ui.overlay.ctypes") as mock_ctypes:
-            mock_dpg.font.side_effect = OSError("font missing")
+                patch("src.ui.overlay.ctypes") as mock_ctypes, \
+                patch("src.ui.fonts.dpg"):
             mock_ctypes.windll.user32.GetWindowLongW.return_value = 0
             mock_ctypes.windll.user32.GetSystemMetrics.return_value = 1920
-            with caplog.at_level(logging.WARNING, logger="BlackDragon"):
-                overlay._setup_dpg()
-        assert any("字体加载异常" in r.getMessage() for r in caplog.records)
+            mock_dpg.is_dearpygui_running.return_value = False  # run() 立即退出
+            overlay.start()
+            assert overlay._thread is not None
+            assert overlay._thread.daemon is True
+            overlay._thread.join(timeout=5)
+            assert overlay._thread.is_alive() is False
 
-    def test_run_loops_then_destroys(self, overlay):
-        """run 循环执行 update_logic + render，结束后 destroy_context。"""
-        with patch("src.ui.overlay.dpg") as mock_dpg:
-            mock_dpg.is_dearpygui_running.side_effect = [True, True, False]
-            with patch.object(overlay, "_setup_dpg") as mock_setup:
-                overlay.run()
-        assert mock_setup.call_count == 1
-        assert mock_dpg.render_dearpygui_frame.call_count == 2
+        mock_dpg.create_context.assert_called_once()
         mock_dpg.destroy_context.assert_called_once()
 
     def test_destroy_calls_destroy_context(self, overlay):
@@ -494,8 +496,91 @@ class TestDpgLifecycleSmoke:
 
 
 # =============================================================================
-# 15. 结构约束
+# 14b. 命令队列（show/hide/stop 由 overlay 线程处理）
 # =============================================================================
+
+class TestCommandQueue:
+    def test_process_show_command(self, overlay):
+        """show 命令 → configure_viewport(show=True) + visible=True。"""
+        with patch("src.ui.overlay.dpg") as mock_dpg:
+            overlay._visible = False
+            overlay._command_queue.put("show")
+            overlay._process_commands()
+        mock_dpg.configure_viewport.assert_called_with("overlay", show=True)
+        assert overlay._visible is True
+
+    def test_process_hide_command(self, overlay):
+        """hide 命令 → configure_viewport(show=False) + visible=False。"""
+        with patch("src.ui.overlay.dpg") as mock_dpg:
+            overlay._visible = True
+            overlay._command_queue.put("hide")
+            overlay._process_commands()
+        mock_dpg.configure_viewport.assert_called_with("overlay", show=False)
+        assert overlay._visible is False
+
+    def test_process_stop_command(self, overlay):
+        """stop 命令 → _running=False（线程退出）。"""
+        overlay._running = True
+        overlay._command_queue.put("stop")
+        overlay._process_commands()
+        assert overlay._running is False
+
+    def test_show_hide_put_command(self, overlay):
+        """show()/hide()/stop() 仅投递队列命令——不直接调用 DPG。"""
+        with patch("src.ui.overlay.dpg") as mock_dpg:
+            overlay.show()
+            overlay.hide()
+            overlay.stop()
+        mock_dpg.configure_viewport.assert_not_called()  # 命令由线程处理
+        assert overlay._command_queue.qsize() == 3
+
+    def test_put_command_queue_full_drops_oldest(self, overlay):
+        """队列满时丢弃最旧命令，保留最新。"""
+        for cmd in ["show", "hide", "show", "hide", "show", "hide",
+                    "show", "hide", "show", "hide", "stop"]:
+            overlay._put_command(cmd)
+        # 最多 10 条——最旧的被丢弃，最新的是 stop
+        assert overlay._command_queue.qsize() == 10
+        commands = []
+        while not overlay._command_queue.empty():
+            commands.append(overlay._command_queue.get_nowait())
+        assert commands[-1] == "stop"
+
+
+# =============================================================================
+# 15. 结构约束：OverlayUI 不得启动自己的 DPG event loop
+# =============================================================================
+
+class TestNoOwnEventLoop:
+    def test_public_methods_no_own_loop(self):
+        """start/stop/show/hide 不启动自己的 DPG event loop。
+
+        这些方法仅投递 queue 命令——event loop 由 overlay 线程的
+        run() 管理，DPG 调用在 overlay 线程执行。
+        """
+        import inspect
+        import src.ui.overlay as ov_mod
+        public_methods = [
+            ov_mod.OverlayUI.start,
+            ov_mod.OverlayUI.stop,
+            ov_mod.OverlayUI.show,
+            ov_mod.OverlayUI.hide,
+        ]
+        for method in public_methods:
+            src = inspect.getsource(method)
+            assert "start_dearpygui" not in src, f"{method.__name__} contains start_dearpygui"
+            assert "is_dearpygui_running" not in src, f"{method.__name__} contains is_dearpygui_running"
+            assert "render_dearpygui_frame" not in src, f"{method.__name__} contains render"
+
+    def test_run_is_thread_target(self):
+        """run() 是唯一含 event loop 的方法（线程 target）。"""
+        import inspect
+        import src.ui.overlay as ov_mod
+        src = inspect.getsource(ov_mod.OverlayUI.run)
+        assert "is_dearpygui_running" in src
+        assert "render_dearpygui_frame" in src
+        assert "create_context" in src  # 独立 DPG context
+        assert "_destroy" in src        # finally 清理（_destroy 内 destroy_context）
 
 class TestStructuralConstraints:
     def test_no_direct_pymem_or_shared_state(self):

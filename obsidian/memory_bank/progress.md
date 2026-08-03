@@ -4,13 +4,14 @@
 
 ## Phase Overview
 
-| Phase | Name | Status | Est. Days | Key Deliverables | Tag |
-|-------|------|--------|-----------|------------------|-----|
-| **P1** | 项目优化 (Project Standardization) | **Complete** | 2 | README, .gitignore, requirements.txt, directory structure | v0.1.0 |
-| **P2** | P0 修复 (Critical Fixes) | **Complete** | 3 | Logging, unified actions.py, centralized offsets.py, posture FSM, bare except sweep | v0.2.0 |
-| P3 | 测试体系 (Test Safety Net) | **Complete** | 3 | 182 tests (60% coverage), GitHub Actions CI | v0.3.0 |
-| P4 | 架构重构 (Architecture Refactor) | **Active** | 5 | src/core/, src/data/, src/model/, src/ui/, main.py | v0.4.0 |
-| P5 | 模型工程化 (Model Engineering) | Planned | 4 | Model versioning, incremental learning, docs, GitHub Release | v1.0.0 |
+| Phase  | Name                           | Status       | Est. Days | Key Deliverables                                                                    | Tag    |
+| ------ | ------------------------------ | ------------ | --------- | ----------------------------------------------------------------------------------- | ------ |
+| **P1** | 项目优化 (Project Standardization) | **Complete** | 2         | README, .gitignore, requirements.txt, directory structure                           | v0.1.0 |
+| **P2** | P0 修复 (Critical Fixes)         | **Complete** | 3         | Logging, unified actions.py, centralized offsets.py, posture FSM, bare except sweep | v0.2.0 |
+| P3     | 测试体系 (Test Safety Net)         | **Complete** | 3         | 182 tests (60% coverage), GitHub Actions CI                                         | v0.3.0 |
+| P4     | 架构重构 (Architecture Refactor)   | **Active**   | 5         | src/core/, src/data/, src/model/, src/ui/, main.py                                  | v0.4.0 |
+| P5     | 模型工程化 (Model Engineering)      | Planned      | 4         | Model versioning, incremental learning, docs, GitHub Release                        | v1.0.0 |
+|        |                                |              |           |                                                                                     |        |
 
 ## P1 — Project Standardization (Active)
 

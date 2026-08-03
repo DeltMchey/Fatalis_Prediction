@@ -4,6 +4,45 @@
 
 ---
 
+### 2026-08-03 — P4 Step 6 Complete + v0.5.0 Cleanup
+
+#### Phase
+P4 Architecture Refactoring (架构重构) — Complete ✅
+
+#### Completed
+- **P4.6: Integration**
+  - Created `main.py` — application composition root (~85 lines)
+  - Created `tests/test_main_integration.py` — 20 tests, 100% pass
+  - `ai_engine.py` left untouched — retained as legacy reference + P3 test-compat entry
+  - `python main.py` = new recommended entry; `python ai_engine.py` = legacy fallback
+  - 385 tests total, all pass (MPLBACKEND=Agg)
+
+- **v0.5.0 Cleanup**
+  - Moved `enrage.py` → `archive/` (research tool, no test deps)
+  - Moved 8 P2/P3 closure reports → `archive/legacy_reports/`
+  - Updated `README.md` (badges 385/72%, project structure tree, quick start, roadmap)
+  - Updated `CHANGELOG.md` (v0.4.0 + v0.5.0 entries)
+  - Updated `requirements.txt` (runtime vs test dep comments)
+  - Fixed `test_main_integration.py` cross-platform import (stub pymem/dearpygui for Linux CI)
+
+#### API
+- `python main.py` — P4+ composition root (connects pymem → MemoryReader → StateTracker → Predictor → Recorder daemon → OverlayUI blocking)
+- `python ai_engine.py` — legacy God Class (unchanged)
+
+#### Design Decisions
+- Zero-touch `ai_engine.py`: kept frozen for P3 test imports (85 tests) + fallback
+- `main.py` is pure wiring — no business logic, no global mutable state (AST-verified)
+- Shared instances (MemoryReader/StateTracker/buffer/lock) created once, injected by reference
+- Linux CI cross-platform: stub modules pre-installed in sys.modules before `import main`
+
+#### Metrics
+- Tests: 365 → **385** (+20)
+- `main.py` coverage: **100%**
+- Overall coverage: **72%**
+- P4 complete: all 6 steps done, 5 modules extracted, integration wired
+
+#### Review
+- P4.6 Review: **APPROVED** (0 blockers, 2 non-blocking suggestions)
 ### 2026-08-03 — P4 Step 5 Complete
 
 #### Phase

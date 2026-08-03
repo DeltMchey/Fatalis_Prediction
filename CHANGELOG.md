@@ -5,6 +5,49 @@ All notable changes to the BlackDragon project.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.5.0-integration] — 2026-08-03
+
+### Added (P4.6 — Integration)
+
+- `main.py` — application composition root wiring 5 P4 modules
+  - `python main.py` is the new recommended entry point
+  - `python ai_engine.py` retained as legacy fallback (zero modifications)
+- `tests/test_main_integration.py` — 20 tests validating wiring (shared instances,
+  lifecycle order, graceful pymem failure, structural constraints)
+- Project cleanup: `enrage.py` + P2/P3 closure reports moved to `archive/`
+
+### Metrics
+
+| Metric | v0.3.0 | v0.5.0 |
+|--------|--------|--------|
+| Total tests | 182 | **385** |
+| Pass rate | 100% | **100%** |
+| Overall coverage | 60% | **72%** |
+| P4 modules coverage | — | **100%** (5/5 modules) |
+
+---
+
+## [v0.4.0-architecture-refactor] — 2026-08-02/03
+
+### Added (P4 — Architecture Refactor)
+
+- **P4.1**: `src/core/state_tracker.py` — CombatStateTracker (50 tests, 100%)
+- **P4.2**: `src/core/memory_reader.py` — MemoryReader (27 tests, 100%)
+- **P4.3**: `src/model/predictor.py` — ActionPredictor (31 tests, 99%)
+- **P4.4**: `src/data/recorder.py` — CombatRecorder (34 tests, 100%)
+- **P4.5**: `src/ui/overlay.py` — OverlayUI (41 tests, 100%)
+- God Class (`ai_engine.py`): zero modifications, dual-track maintained throughout
+
+### Design
+
+- Sequential extraction from `ai_engine.py` God Class into 5 single-responsibility modules
+- Shared instances injected by reference (MemoryReader/StateTracker shared between
+  Recorder and OverlayUI; Predictor UI-only)
+- Thread model unchanged: main thread = DPG overlay, daemon thread = CSV recorder
+- `ai_engine.py` retained as legacy reference + P3 test-compat entry
+
+---
+
 ## [v0.3.0-test-safety-net] — 2026-08-02
 
 ### Added (P3 — Test Safety Net)

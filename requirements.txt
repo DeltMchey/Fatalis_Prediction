@@ -1,5 +1,9 @@
 # BlackDragon — AI-assisted hunting overlay for Monster Hunter World
 # Install: pip install -r requirements.txt
+#
+# Runtime dependencies (Windows-only project; pymem/dearpygui require Win32 API).
+# Test dependencies (pytest, pytest-cov) are installed separately by CI — see
+# .github/workflows/test.yml.
 
 dearpygui==2.3
 joblib==1.5.3

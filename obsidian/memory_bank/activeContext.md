@@ -2,23 +2,23 @@
 
 ## Current Phase
 
-**P4 Step 5 Complete → P4 Step 6 Pending (Integration)**
+**P4 Architecture Refactor COMPLETE → v0.5.0 Stabilized (P5 Planned)**
 
 ## Current Goal
 
-Architecture refactoring in progress. Steps 1–5 (all modules) complete. Next: Step 6 — Main assembly: wire `ai_engine.py main()` to use extracted modules (MemoryReader + StateTracker + Predictor + CombatRecorder + OverlayUI), remove duplicate logic, keep backward compat.
+Architecture refactoring COMPLETE. All 6 P4 steps done (5 modules extracted + main.py composition root). Project stabilized at v0.5.0: directory cleaned, docs updated, 385 tests green. Next: P5 — Model Engineering (planned, not started).
 
 ## Dual-Track Status
 
 | Track | Status | Description |
 |-------|--------|-------------|
-| **Legacy** | `ai_engine.py` (484 lines) | God Class still fully operational, zero modifications |
+| **Legacy** | `ai_engine.py` (484 lines) | God Class retained as legacy reference + P3 test-compat entry; `python ai_engine.py` fallback |
 | **Extracted** | `src/core/state_tracker.py` | CombatStateTracker — pure state management, 50 tests ✅ |
 | **Extracted** | `src/core/memory_reader.py` | MemoryReader — all pymem reads, 27 tests ✅ |
 | **Extracted** | `src/model/predictor.py` | ActionPredictor — model load + inference, 31 tests ✅ |
 | **Extracted** | `src/data/recorder.py` | CombatRecorder — daemon recording thread, 34 tests ✅ |
 | **Extracted** | `src/ui/overlay.py` | OverlayUI — DearPyGui overlay, 41 tests ✅ |
-| **Pending** | `main.py` | Step 6 — Integration wiring |
+| **Composition** | `main.py` | P4+ composition root — recommended entry, 20 tests ✅ |
 
 ## What We Just Completed
 
@@ -223,12 +223,11 @@ None. P4 Step 6 (Integration) is ready to begin.
 
 ## Recent Decisions
 
-- **P4 Step 5 completed**: OverlayUI extracted — DearPyGui overlay, 41 tests, 100% coverage
-- `_compute_frame` is pure logic: 0 DPG calls (structurally verified by regex), 1:1 order match with original update_logic
-- `self.last_action` dropped — StateTracker owns posture FSM cursor internally
-- `_apply_win32_overlay` isolated to method body — `import src.ui.overlay` cross-platform safe (no module-level ctypes)
-- Constructor: only 5 injected deps stored (MemoryReader + StateTracker + Predictor + buffer + lock); zero DPG/ctypes
-- `run()` uses try/finally for guaranteed `dpg.destroy_context()` — improvement over original
-- P4.5 Review: APPROVED — 0 blockers, 1 non-blocking observation (DPG configure_item order, visually identical)
-- Full suite: 365 tests pass (MPLBACKEND=Agg; pre-existing Tcl environment issue on this machine)
-- All 5 modules extracted; 0 modifications to ai_engine.py
+- **P4 Step 6 completed**: `main.py` composition root — 20 tests, 100% coverage, 385 total green
+- Zero-touch `ai_engine.py`: kept frozen for P3 test imports (85 tests) + legacy fallback
+- `main.py` is pure wiring — no business logic, no global mutable state (AST-verified)
+- Shared instances (MemoryReader/StateTracker/buffer/lock) created once, injected by reference
+- v0.5.0 cleanup: `enrage.py` + 8 P2/P3 reports → `archive/`; README badges 385/72%; CHANGELOG P4 entries; requirements comments
+- Fixed `test_main_integration.py` cross-platform import (stub pymem/dearpygui for Linux CI)
+- P4.6 Review: APPROVED — 0 blockers, 2 non-blocking suggestions
+- Next: P5 Model Engineering (planned, not started)

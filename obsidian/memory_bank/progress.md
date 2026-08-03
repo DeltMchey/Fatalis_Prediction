@@ -66,7 +66,7 @@ See `Tech_debt.md` items #1, #2, #3. Extended with audit findings P2.4–P2.6.
 
 ## P4 — Architecture Refactor (Active 🔵)
 
-**P4 Step 1–5 complete (2026-08-03). Step 6 (Integration) pending.**
+**P4 Step 1–6 complete (2026-08-03). P4 Architecture Refactor COMPLETE ✅**
 
 Sequential extraction from `ai_engine.py`:
 - [x] **P4.1: StateTracker** → `src/core/state_tracker.py` — CombatStateTracker class, 50 tests, 100% coverage
@@ -74,7 +74,7 @@ Sequential extraction from `ai_engine.py`:
 - [x] **P4.3: ActionPredictor** → `src/model/predictor.py` — model load + inference pipeline, 31 tests, 99% coverage
 - [x] **P4.4: CombatRecorder** → `src/data/recorder.py` — daemon recording thread, 34 tests, 100% coverage
 - [x] **P4.5: OverlayUI** → `src/ui/overlay.py` — DearPyGui overlay UI, 41 tests, 100% coverage
-- [ ] **P4.6: Main assembly** → `main.py`
+- [x] **P4.6: Main assembly** → `main.py` — composition root (85 lines), 20 tests, 100% coverage
 
 ## P5 — Model Engineering (Planned)
 
@@ -89,16 +89,18 @@ Sequential extraction from `ai_engine.py`:
 
 ## Current State Summary
 
-- **Phase**: P4 (Architecture Refactor) — active; P4 Step 1–5 complete, Step 6 (Integration) pending
-- **Project runs**: Yes — `python ai_engine.py` works with the game
-- **Tests**: **365** (16 test files, 100% pass rate)
-- **Coverage**: **72%** overall; 100% config + data pipeline + state_tracker + memory_reader + recorder + overlay; 99% predictor; 43% ai_engine (legacy wiring)
-- **Extracted modules** (not yet wired):
+- **Phase**: P4 (Architecture Refactor) — **COMPLETE**; v0.5.0 stabilization done
+- **Project runs**: Yes — `python main.py` (P4+ entry) or `python ai_engine.py` (legacy fallback)
+- **Tests**: **385** (17 test files, 100% pass rate)
+- **Coverage**: **72%** overall; 100% config + data pipeline + state_tracker + memory_reader + recorder + overlay + main; 99% predictor; 43% ai_engine (legacy wiring)
+- **Extracted modules** (wired via main.py):
   - `src/core/state_tracker.py` — CombatStateTracker (156 lines, 50 tests, 100%)
   - `src/core/memory_reader.py` — MemoryReader (183 lines, 27 tests, 100%)
   - `src/model/predictor.py` — ActionPredictor (201 lines, 31 tests, 99%)
   - `src/data/recorder.py` — CombatRecorder (201 lines, 34 tests, 100%)
   - `src/ui/overlay.py` — OverlayUI (289 lines, 41 tests, 100%)
-- **Dual-track status**: `ai_engine.py` God Class still fully operational alongside 5 extracted modules
+  - `main.py` — composition root (85 lines, 20 tests, 100%)
+- **Dual-track status**: `ai_engine.py` God Class retained as legacy reference + P3 test-compat entry; `python main.py` is the recommended P4+ entry
+- **Cleanup (v0.5.0)**: `enrage.py` + 8 P2/P3 reports → `archive/`; README/CHANGELOG/requirements updated
 - **CI/CD**: GitHub Actions (pytest + coverage on Windows/Ubuntu, Python 3.11/3.12)
-- **Version control**: P1+P2+P3+P4.1 committed; P4.2+P4.3+P4.4+P4.5 pending
+- **Version control**: P1+P2+P3+P4.1 committed; P4.2+P4.3+P4.4+P4.5 committed; P4.6 + v0.5.0 cleanup pending commit

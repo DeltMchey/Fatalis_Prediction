@@ -4,6 +4,48 @@
 
 ---
 
+### 2026-08-03 — P4 Step 4 Complete
+
+#### Phase
+P4 Architecture Refactoring (架构重构)
+
+#### Completed
+- **P4.4: Recorder Extraction**
+  - Created `src/data/__init__.py`
+  - Created `src/data/recorder.py` — `CombatRecorder` class (216 lines)
+  - Created `tests/test_recorder.py` — 34 tests, 100% pass
+  - `recorder.py` achieves **100% branch coverage**
+  - `ai_engine.py` / `state_tracker.py` / `memory_reader.py` left untouched — dual-track maintained
+
+#### API
+- `CombatRecorder(memory_reader, state_tracker, action_buffer, action_lock, data_dir="data")`
+- Lifecycle: `start()` (daemon thread, idempotent) / `stop()` (explicit close) / `run()` (thread target, NEVER called directly)
+- Gating: `_should_pause()` — `is_recording` off OR zone != Fatalis → 1s sleep
+- Frame: `_record_frame()` — MemoryReader read → action_buffer append (with lock) → CSV row
+- CSV format identical to original `data_logger_thread`: timestamp, hp_percent, phase, is_enraged, distance, relative_angle, posture, action_id
+
+#### Design Decisions
+- All memory reads via **MemoryReader** (no direct pymem / pm.read_*)
+- All state reads via **CombatStateTracker** (no shared_state dict) — `is_recording` / `phase` / `posture` / `is_enraged`
+- Action ID appended to shared `action_buffer` under `action_lock` (Recorder is producer, UI is consumer)
+- D3: single-frame exception → `logger.warning` → sleep → continue (daemon stays alive); `stop()` is the only exit
+- CSV file created lazily on first successful frame (nested data_dir auto-created)
+- Column list single source of truth: `CombatRecorder._COLUMNS` (test imports it to avoid drift)
+
+#### Review
+- P4 Step 4 Review: **APPROVED** (SF-1: `_should_pause()` try/except coverage parity with legacy — fixed)
+- SF-1 fix: `run()` try boundary moved up 3 lines to cover `_should_pause()` → defensive parity with original `data_logger_thread` exception scope
+
+#### Metrics
+Tests: 290 → **324** (+34)
+recorder.py coverage: **100%**
+4 of 6 modules extracted (StateTracker + MemoryReader + Predictor + Recorder)
+
+#### Known Environment Issue (pre-existing, NOT a regression)
+- This machine's Tcl/Tk install is broken (`init.tcl` missing), so matplotlib intermittently
+  falls back to TkAgg backend → flaky `test_train_lgbm.py` failure on plain `pytest`
+- Reproduced WITHOUT P4.4 changes (deselecting new recorder tests still fails)
+- Workaround: `MPLBACKEND=Agg pytest` → full suite green (324/324)
 ## 2026-08-02 — P4 Step 3 Complete
 
 ### Phase

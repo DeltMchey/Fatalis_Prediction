@@ -2,11 +2,11 @@
 
 ## Current Phase
 
-**P4 Step 3 Complete → P4 Step 4 Pending (Recorder)**
+**P4 Step 4 Complete → P4 Step 5 Pending (OverlayUI)**
 
 ## Current Goal
 
-Architecture refactoring in progress. Steps 1–3 (StateTracker + MemoryReader + Predictor) complete. Next: Step 4 — Recorder extraction (daemon thread CSV recording).
+Architecture refactoring in progress. Steps 1–4 (StateTracker + MemoryReader + Predictor + Recorder) complete. Next: Step 5 — OverlayUI extraction (DearPyGui UI from `Ultimate_Radar_UI`).
 
 ## Dual-Track Status
 
@@ -16,10 +16,28 @@ Architecture refactoring in progress. Steps 1–3 (StateTracker + MemoryReader +
 | **Extracted** | `src/core/state_tracker.py` | CombatStateTracker — pure state management, 50 tests ✅ |
 | **Extracted** | `src/core/memory_reader.py` | MemoryReader — all pymem reads, 27 tests ✅ |
 | **Extracted** | `src/model/predictor.py` | ActionPredictor — model load + inference, 31 tests ✅ |
-| **Pending** | `src/data/recorder.py` | Step 4 — daemon recording thread |
+| **Extracted** | `src/data/recorder.py` | CombatRecorder — daemon recording thread, 34 tests ✅ |
+| **Pending** | `src/ui/overlay.py` | Step 5 — DearPyGui UI extraction |
 
 ## What We Just Completed
 
+#### P4 Step 4 — Recorder Extraction ✅
+
+- **Status**: ✅ Complete
+- **Deliverables**:
+  - `src/data/__init__.py` — data package init
+  - `src/data/recorder.py` (201 lines) — **CombatRecorder** class, 100% coverage
+  - `tests/test_recorder.py` — **34 tests**, all passed
+- **Design**: Daemon thread CSV recording from `data_logger_thread` (ai_engine.py L271–316)
+  - Lifecycle: `start()` / `stop()` / `run()` — daemon thread, explicit stop
+  - All memory reads via **MemoryReader** (7 calls), no direct pymem
+  - All state reads via **CombatStateTracker** (`is_recording`/`phase`/`is_enraged`/`posture`)
+  - action_buffer producer: `append(action_id)` with `action_lock`
+  - CSV format identical to original: timestamp, hp_percent, phase, is_enraged, distance, relative_angle, posture, action_id
+  - 0.1s frame interval, zone=417 gating, lazy file creation, 3-tier gating
+- **SF-1 fix**: `run()` try boundary moved up to cover `_should_pause()` — exception scope parity with original `data_logger_thread`
+- **Review**: P4 Step 4 Review **APPROVED** (SF-1 fixed)
+- **Constraint**: `ai_engine.py` / `state_tracker.py` / `memory_reader.py` untouched (dual-track)
 ### P4 Step 3 — Predictor Extraction ✅
 
 - **Status**: ✅ Complete
@@ -103,15 +121,15 @@ P3.1–P3.5 are done. 182 tests, 100% pass, 60% overall coverage (100% on config
 
 ## Current Test Metrics
 
-| Metric | Value |
+| Total tests | **324** (15 test files) |
 |--------|-------|
-| Total tests | **290** (14 test files) |
 | Pass rate | 100% |
 | Overall coverage | **72%** |
 | `ai_engine.py` coverage | **43%** |
 | `state_tracker.py` coverage | **100%** |
 | `memory_reader.py` coverage | **100%** |
 | `predictor.py` coverage | **99%** |
+| `recorder.py` coverage | **100%** |
 | Config modules coverage | 100% (3/3 modules) |
 | Data pipeline coverage | 100% (3/3 modules) |
 | CI workflow | `.github/workflows/test.yml` (Windows + Ubuntu, Python 3.11/3.12) |
@@ -134,6 +152,8 @@ P3.1–P3.5 are done. 182 tests, 100% pass, 60% overall coverage (100% on config
 | `tests/test_memory_reader.py` | 27 | P4.2 | MemoryReader: pointer chains, zone, monster, player, HP, action, enrage |
 | `tests/test_predictor.py` | 31 | P4.3 | ActionPredictor: model load, predict, feature format, filters, top-k, edge cases |
 
+| `tests/test_recorder.py` | 34 | P4.4 | CombatRecorder: header, gating, recording, buffer, lifecycle, structural |
+
 ## What Is Allowed Right Now
 
 - Extracting new modules from `ai_engine.py` into `src/core/`, `src/data/`, `src/model/`, `src/ui/`
@@ -148,43 +168,43 @@ P3.1–P3.5 are done. 182 tests, 100% pass, 60% overall coverage (100% on config
 2. **No behavior changes** — all existing logic must produce identical outputs
 3. **No model changes** — training and inference pipelines untouched
 4. **No gameplay changes** — action mappings, posture rules, phase thresholds remain unchanged
-
 ## Success Criteria for P4
 
 - [x] P4.1: StateTracker extracted — `src/core/state_tracker.py`, 50 tests, 100% coverage
 - [x] P4.2: MemoryReader extracted — `src/core/memory_reader.py`, 27 tests, 100% coverage
 - [x] P4.3: Predictor extracted — `src/model/predictor.py`, 31 tests, 99% coverage
-- [ ] P4.4: Recorder extracted — `src/data/recorder.py`, mock injection tests
+- [x] P4.4: Recorder extracted — `src/data/recorder.py`, 34 tests, 100% coverage
 - [ ] P4.5: OverlayUI extracted — `src/ui/overlay.py`, smoke tests
 - [ ] P4.6: Main assembly — `main.py` + `ai_engine.py` backward compat stub
 - [ ] Overall coverage ≥80%
 - [ ] Git tag: `v0.4.0-architecture-refactor`
+## Next Objective: P4 Step 5 OverlayUI Extraction
 
-## Next Objective: P4 Step 4 Recorder Extraction
+Extract DearPyGui UI from `Ultimate_Radar_UI` class into `src/ui/overlay.py`:
+- `Ultimate_Radar_UI.__init__` → OverlayUI constructor
+- `update_logic` (L358–465) → OverlayUI refresh method
+- DPG context, font, window, viewport setup → constructor
+- Inject StateTracker + Predictor (delegated from main)
+- Keep `ai_engine.py` backward compat stub
 
-Extract daemon recording thread into `src/data/recorder.py`:
-- `data_logger_thread` → `CombatRecorder` class
-- Injects MemoryReader + CombatStateTracker (not direct pymem)
-- CSV filename generation, header writing, 0.1s loop
-- `is_recording` flag gating, zone gating
-
-Sequential extraction from `ai_engine.py`:
+Sequential extraction:
 1. ✅ StateTracker → `src/core/state_tracker.py`
 2. ✅ MemoryReader → `src/core/memory_reader.py`
 3. ✅ ActionPredictor → `src/model/predictor.py`
-4. 🔜 CombatRecorder → `src/data/recorder.py`
-5. OverlayUI → `src/ui/overlay.py`
+4. ✅ CombatRecorder → `src/data/recorder.py`
+5. 🔜 OverlayUI → `src/ui/overlay.py`
 6. Main assembly → `main.py`
-
 ## Current Blockers
 
-None. P4 Step 4 (Recorder) is ready to begin.
+None. P4 Step 5 (OverlayUI) is ready to begin.
 
 ## Recent Decisions
 
-- **P4 Step 3 completed**: ActionPredictor extracted — model load + inference pipeline, 31 tests, 99% coverage
-- 4 P3.3 filter functions + 2 constants migrated to predictor.py (ai_engine.py copies retained for dual-track)
-- `predict()` returns raw (class_id, prob) tuples — no ACTION_DB for display names (UI does formatting)
-- Model load failure is silent (`_model=None`, `predict()` returns `[]`) — caller checks `is_loaded`
-- Mini LightGBM training in tests avoids LGBMClassifier.__init__ monkeypatching (sklearn API contract safe)
-- P4.3 Review: APPROVED with 2 suggestions (missing all-zero-prob scenario test, model load logging)
+- **P4 Step 4 completed**: CombatRecorder extracted — daemon recording thread, 34 tests, 100% coverage
+- SF-1 fix: `run()` try boundary moved up to cover `_should_pause()` (exception scope parity with legacy `data_logger_thread`)
+- CombatRecorder injects MemoryReader + CombatStateTracker — no direct pymem or shared_state access
+- CSV columns single source of truth: `CombatRecorder._COLUMNS` (test imports from class to avoid drift)
+- Per-frame open/close CSV matches legacy behavior (crash-safe: data flushed every 0.1s)
+- Thread lifecycle: `start()` idempotent, `stop()` explicit, daemon thread, exception survival
+- P4.4 Review: APPROVED — 1 Should Fix (SF-1), applied
+- Full suite: 324 tests pass (MPLBACKEND=Agg; pre-existing Tcl environment issue on this machine)

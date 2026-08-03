@@ -66,13 +66,13 @@ See `Tech_debt.md` items #1, #2, #3. Extended with audit findings P2.4–P2.6.
 
 ## P4 — Architecture Refactor (Active 🔵)
 
-**P4 Step 1–3 complete (2026-08-02). Step 4 pending.**
+**P4 Step 1–4 complete (2026-08-03). Step 5 pending.**
 
 Sequential extraction from `ai_engine.py`:
 - [x] **P4.1: StateTracker** → `src/core/state_tracker.py` — CombatStateTracker class, 50 tests, 100% coverage
 - [x] **P4.2: MemoryReader** → `src/core/memory_reader.py` — 9 public methods, 27 tests, 100% coverage
 - [x] **P4.3: ActionPredictor** → `src/model/predictor.py` — model load + inference pipeline, 31 tests, 99% coverage
-- [ ] **P4.4: CombatRecorder** → `src/data/recorder.py`
+- [x] **P4.4: CombatRecorder** → `src/data/recorder.py` — daemon recording thread, 34 tests, 100% coverage
 - [ ] **P4.5: OverlayUI** → `src/ui/overlay.py`
 - [ ] **P4.6: Main assembly** → `main.py`
 
@@ -89,14 +89,15 @@ Sequential extraction from `ai_engine.py`:
 
 ## Current State Summary
 
-- **Phase**: P4 (Architecture Refactor) — active; P4 Step 1–3 complete, Step 4 pending
+- **Phase**: P4 (Architecture Refactor) — active; P4 Step 1–4 complete, Step 5 pending
 - **Project runs**: Yes — `python ai_engine.py` works with the game
-- **Tests**: **290** (14 test files, 100% pass rate)
-- **Coverage**: **72%** overall; 100% config + data pipeline + state_tracker + memory_reader; 99% predictor; 43% ai_engine (UI/thread code)
+- **Tests**: **324** (15 test files, 100% pass rate)
+- **Coverage**: **72%** overall; 100% config + data pipeline + state_tracker + memory_reader + recorder; 99% predictor; 43% ai_engine (UI/thread code)
 - **Extracted modules** (not yet wired):
   - `src/core/state_tracker.py` — CombatStateTracker (156 lines, 50 tests, 100%)
   - `src/core/memory_reader.py` — MemoryReader (183 lines, 27 tests, 100%)
   - `src/model/predictor.py` — ActionPredictor (201 lines, 31 tests, 99%)
-- **Dual-track status**: `ai_engine.py` God Class still fully operational alongside 3 extracted modules
+  - `src/data/recorder.py` — CombatRecorder (201 lines, 34 tests, 100%)
+- **Dual-track status**: `ai_engine.py` God Class still fully operational alongside 4 extracted modules
 - **CI/CD**: GitHub Actions (pytest + coverage on Windows/Ubuntu, Python 3.11/3.12)
-- **Version control**: P1+P2+P3+P4.1 committed; P4.2+P4.3 pending
+- **Version control**: P1+P2+P3+P4.1 committed; P4.2+P4.3+P4.4 pending

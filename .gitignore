@@ -26,6 +26,9 @@ build/BlackDragonOverlay/
 dist/
 *.spec.bak
 
+# Release artifacts (generated zip, not source)
+release/
+
 # Logs
 *.log
 

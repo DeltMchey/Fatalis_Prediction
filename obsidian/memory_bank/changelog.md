@@ -4,6 +4,34 @@
 
 ---
 
+### 2026-08-04 — PyInstaller Frozen Support + v1.0 Release Candidate
+
+#### Phase
+P5 Control Center (控制中心) — PyInstaller + RC ✅
+
+#### Completed
+- **PyInstaller 打包支持** — 双 EXE (`BlackDragon.exe` + `BlackDragonOverlay.exe`) 通过 `--onedir` COLLECT 构建
+  - `build/BlackDragon.spec` + `build/BlackDragonOverlay.spec` — hidden imports (dearpygui, lightgbm, sklearn, pymem, src/*)
+  - `scripts/build_exe.ps1` — 一键构建 (test → clean → build → merge → surface data/model)
+  - Surfacing: `_internal/models/` → `dist/BlackDragon/models/` (bundled model); `_internal/data/` → `dist/BlackDragon/data/` (training dataset)
+  - Frozen 路径修复: `controller.data_dir` frozen-aware; `start_training` cwd 固定到 exe 目录; `start_overlay` sibling exe spawn
+  - UTF-8 编码修复: `--train` 冻 冻结启动 `sys.stdout.reconfigure(encoding="utf-8")`
+  - `os.makedirs("models", exist_ok=True)` 在 `train_lgbm.py` 中确保模型输出目录存在
+
+- **Runtime Bug Fixes**: CSV 路径 (bug #1), Training subprocess 复用 Dashboard (bug #2), Training data 缺失 #3), Model 首 首次加载 (bug #4)
+- **RC Runtime Test**: 6/6 场景通过 (clean install / dashboard / overlay / data / model / training)
+- **READY 更新**: LICENSE (MIT), CONTRIBUTING.md, SECURITY.md; README badges → 551 tests / 94%
+- **KB v1.0**: 50 active docs + 16 legacy archived; 13 audit/build docs
+- **ADR**: ADR-P5.3 status 更新为 Decided
+
+#### Metrics
+- Tests: 541 → **551** (+10 net: 7 frozen-path + dashboard UI)
+- Coverage: 94% (unchanged)
+- `dist/BlackDragon/` package: 227 MB (two EXEs + surfaced models/data)
+
+#### Review
+- RC tests all passed; release candidate ready
+
 ### 2026-08-04 — P5.3 Auto-Start + Recording Default (ADR-P5.3)
 
 #### Phase

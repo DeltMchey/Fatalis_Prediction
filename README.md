@@ -2,9 +2,9 @@
 
 > AI-assisted hunting overlay for **Monster Hunter World** — predicts Fatalis's next attack in real-time.
 
-[![Phase](https://img.shields.io/badge/phase-P4%20Architecture%20Refactor-green)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-385%20passed-brightgreen)](#roadmap)
-[![Coverage](https://img.shields.io/badge/coverage-72%25-brightgreen)](#roadmap)
+[![Phase](https://img.shields.io/badge/phase-P5.3%20Dual--Process-blue)](#roadmap)
+[![Tests](https://img.shields.io/badge/tests-551%20passed-brightgreen)](#roadmap)
+[![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)](#roadmap)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -19,12 +19,13 @@ BlackDragon reads Monster Hunter World process memory in real-time, runs a train
 | **Game-rule filtering** | Phase/posture constraints ensure predictions are physically possible |
 | **Nova warning** | HP-threshold-based alert for Fatalis's ultimate attack (飞天火) |
 | **Combat recording** | Real-time CSV logging (~10 rows/sec) for model training |
+| **Control panel** | Dashboard UI for managing overlay, recording, training, and real-time logs |
 
 ## Requirements
 
 - **Windows** only (uses Win32 API and `pymem` for process memory)
 - **Monster Hunter World** running (`MonsterHunterWorld.exe`)
-- **Python 3.x** with virtual environment
+- **Python 3.11+** with virtual environment
 - **Chinese font**: `msyh.ttc` (Microsoft YaHei) — included with Windows
 
 ## Quick Start
@@ -45,41 +46,65 @@ python data_cleaner.py
 python train_lgbm.py
 
 # 5. Launch the game, enter a Fatalis quest, then run:
-python main.py            # P4+ 推荐入口（组合 5 个模块）
-# python ai_engine.py     # legacy fallback（God Class，保留作参考）
+python launch.py            # P5.3 Dashboard + Overlay 双进程（推荐）
+# python overlay.py         # 仅 Overlay 进程
+# python main.py            # P4 legacy 单进程入口
+# python ai_engine.py       # Legacy God Class
 ```
+
+## Entry Points
+
+| Command | Description | Status |
+|---------|-------------|:---:|
+| `python launch.py` | **Dashboard + Overlay** 双进程启动器（自动启动覆盖层） | ✅ Recommended |
+| `python overlay.py` | 独立 Overlay 进程入口（透明覆盖层） | ✅ |
+| `python main.py` | P4 单进程 overlay 入口 | ⚠️ Legacy |
+| `python ai_engine.py` | God Class 单体脚本 | ⚠️ Legacy |
+
+### CLI Tools
+
+| Command | Description |
+|---------|-------------|
+| `python data_cleaner.py` | ETL: raw CSV → ML-ready dataset |
+| `python train_lgbm.py` | LightGBM training script |
+| `python data_upgrade.py` | Backfill phase/enrage columns in old CSVs |
+
+## Documentation
+
+Full knowledge base: [`obsidian/Index.md`](obsidian/Index.md)
+
+Architecture overview: [`obsidian/Architecture/System_Architecture.md`](obsidian/Architecture/System_Architecture.md)
+
+Architecture decision records: [`obsidian/docs/architecture/`](obsidian/docs/architecture/)
 
 ## Project Structure
 
 ```
 BlackDragon/
-├── main.py               # P4+ composition root（推荐入口）
-├── ai_engine.py          # legacy God Class（保留：P3 测试兼容 + fallback）
-├── src/                  # P4 架构模块
-│   ├── core/
-│   │   ├── state_tracker.py    # CombatStateTracker — 共享战斗状态
-│   │   └── memory_reader.py    # MemoryReader — 唯一游戏内存读取入口
-│   ├── model/
-│   │   └── predictor.py        # ActionPredictor — AI 预测管线
-│   ├── data/
-│   │   └── recorder.py         # CombatRecorder — 录制 daemon 线程
-│   ├── ui/
-│   │   └── overlay.py          # OverlayUI — DearPyGui 覆盖层
-│   ├── config/                 # 动作数据库 + 内存偏移量（单一数据源）
-│   └── logging_config.py
+├── launch.py               # P5.3 双进程入口（推荐）
+├── overlay.py              # P5.3 Overlay 独立进程入口
+├── main.py                 # P4 legacy 单进程入口
+├── ai_engine.py            # Legacy God Class
 │
-├── data_cleaner.py       # ETL: raw CSV → ML-ready dataset
-├── train_lgbm.py         # LightGBM training script
-├── data_upgrade.py       # Backfill phase/enrage columns in old CSVs
+├── src/                    # 源码
+│   ├── core/               #   CombatStateTracker + MemoryReader
+│   ├── model/              #   ActionPredictor（AI 推理管线）
+│   ├── data/               #   CombatRecorder（CSV 录制 daemon）
+│   ├── ui/                 #   OverlayUI + shared CJK font
+│   ├── app/                #   AppController / AppConfig / GameService
+│   ├── dashboard/          #   Dashboard UI（控制中心）
+│   ├── bootstrap/          #   DependencyChecker（启动检查）
+│   └── config/             #   动作数据库 + 内存偏移量（单一数据源）
 │
-├── data/                 # Combat recording CSVs (git-ignored)
-│   └── ML_Ready_Dataset.csv       (cleaned transition pairs)
-├── models/               # Trained artifacts (git-ignored)
-│   ├── fatalis_ai_model.pkl
-│   └── feature_importance.png
-├── archive/              # Deprecated files + legacy closure reports
-├── obsidian/             # Memory bank + project documentation
-├── tests/                # Test suite (16 files, 385 tests, pytest + coverage)
+├── data_cleaner.py         # ETL: raw CSV → ML-ready dataset
+├── train_lgbm.py           # LightGBM training script
+├── data_upgrade.py         # Backfill phase/enrage columns in old CSVs
+│
+├── data/                   # Combat recording CSVs (git-ignored)
+├── models/                 # Trained artifacts (git-ignored)
+├── archive/                # Deprecated files + legacy closure reports
+├── obsidian/               # Knowledge base + project documentation
+├── tests/                  # Test suite (26 files, 551 tests, pytest + coverage)
 ├── requirements.txt
 ├── CHANGELOG.md
 └── .gitignore
@@ -88,26 +113,26 @@ BlackDragon/
 ## How It Works
 
 ```
-Game Memory ──► ai_engine.py (live)
+Game Memory ──► pymem (MemoryReader)
                     │
-                    ├──► data/*.csv ──► data_cleaner.py ──► data/ML_Ready_Dataset.csv
-                    │                                              │
-                    │                                              ▼
-                    │                                      train_lgbm.py
-                    │                                              │
-                    │                                              ▼
-                    │                                      models/*.pkl
-                    │                                              │
-                    └────────────────────────────── joblib.load() ◄┘
-                                                       │
-                                                  AI Inference
-                                                       │
-                                                  Top-3 Overlay
+    ┌───────────────┼───────────────┐
+    ▼               ▼               ▼
+  Recorder       StateMachine    AI Predictor
+  (CSV daemon)   (CombatState)   (ActionPredictor)
+    │                               │
+    ▼                               ▼
+  data/*.csv                    Top-3 Overlay
+    │                         (OverlayUI DPG)
+    ▼
+  data_cleaner.py
+    │
+    ▼
+  train_lgbm.py → models/fatalis_ai_model.pkl
 ```
 
-1. **Read memory** — `pymem` reads MonsterHunterWorld.exe process memory directly
-2. **State machine** — Computes posture, phase, enrage, distance, angle from raw memory
-3. **ML prediction** — LightGBM `predict_proba()` on 6 features → probability distribution
+1. **Read memory** — `MemoryReader` (pymem) reads `MonsterHunterWorld.exe` process memory
+2. **State machine** — `CombatStateTracker` computes posture, phase, enrage, distance, angle
+3. **ML prediction** — `ActionPredictor` runs LightGBM `predict_proba()` on 6 features
 4. **Hard filter** — Phase/posture constraints zero out impossible actions → renormalize
 5. **Display** — Top-3 predictions shown on transparent overlay
 
@@ -119,6 +144,14 @@ ML probabilities → Phase filter → Posture filter → Renormalize → Top-3
 
 Pure ML can output physically impossible predictions. The hard filter guarantees legitimacy.
 
+### Architecture: Dual-Process (P5.3)
+
+BlackDragon v1.0 uses two independent Python processes:
+- **Dashboard Process** (`launch.py`) — control center with GameService, AppController, DPG UI
+- **Overlay Process** (`overlay.py`) — transparent game overlay with independent DPG context
+
+This solves the DPG 2.x / GLFW main-thread limitation. See [`obsidian/Architecture/System_Architecture.md`](obsidian/Architecture/System_Architecture.md) for full architecture documentation.
+
 ## Known Limitations
 
 - Single monster only (Fatalis, zone 417)
@@ -129,15 +162,23 @@ Pure ML can output physically impossible predictions. The hard filter guarantees
 ## Roadmap
 
 | Phase | Name | Status |
-|-------|------|--------|
+|-------|------|:---:|
 | P1 | Project Standardization | ✅ Done |
-| P2 | Critical Fixes (logging, offset centralization) | ✅ Done |
+| P2 | Critical Fixes | ✅ Done |
 | P3 | Test Safety Net (182 tests, 60% coverage, CI) | ✅ Done |
-| P4 | Architecture Refactor (modular src/, 385 tests) | ✅ Done |
-| P5 | Model Engineering (versioning, incremental learning) | Planned |
+| P4 | Architecture Refactor (5 modules extracted) | ✅ Done |
+| P5 | Control Center (Dashboard + Bootstrap + GameService) | ✅ Done |
+| P5.1 | Bootstrap + Game-less Startup | ✅ Done |
+| P5.2 | Overlay Integration Experiment (deferred → ADR-P5.2) | ✅ Done |
+| P5.3 | Dual-Process Overlay Architecture (551 tests, 94% coverage) | ✅ Done |
+| P6 | Model Engineering (versioning, incremental learning) | 📋 Future |
 
-See [`docs/Refactoring_roadmap.md`](docs/Refactoring_roadmap.md) for details.
+See [`obsidian/Development/Development_Roadmap.md`](obsidian/Development/Development_Roadmap.md) for detailed roadmap. Historical roadmap: [`obsidian/docs/legacy/Refactoring_roadmap.md`](obsidian/docs/legacy/Refactoring_roadmap.md).
+
+## Documentation
+
+Full knowledge base: [`obsidian/Index.md`](obsidian/Index.md)
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE)

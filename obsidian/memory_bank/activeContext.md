@@ -2,11 +2,31 @@
 
 ## Current Phase
 
-**P5 Dashboard Complete → P5.2 Overlay Integration Deferred (see ADR-P5.2)**
+**P5.3 Dual-Process Overlay — v1.0 Release Candidate (551 tests, 94% coverage)**
 
 ## Current Goal
 
-P5 Dashboard control center is functional. P5.2 overlay integration hit a hard limitation: DPG 2.x + GLFW cannot create windows from non-main threads. The recommended path is dual-process architecture (Dashboard + Overlay as separate Python processes). See `obsidian/docs/architecture/ADR-P5.2-overlay-process.md` for the full decision record.
+BlackDragon v1.0 release candidate complete. Dual-process architecture (Dashboard + Overlay as separate Python processes) is fully implemented, tested, and packaged with PyInstaller. Frozen EXE support includes auto-start, model lifecycle, and training pipeline. RC runtime test passed all 6 scenarios.
+
+## Key Accomplishments (P5.3 → v1.0 RC)
+
+| Area | Status | Description |
+|------|:---:|------|
+| **P5.3 Dual-process** | ✅ | `launch.py` → Dashboard + `overlay.py` → Overlay (independent DPG contexts per ADR-P5.2) |
+| **Auto-start** | ✅ | `auto_start_overlay=True` (ADR-P5.3); overlay retry loop for game detection |
+| **PyInstaller EXE** | ✅ | Two EXEs (`BlackDragon.exe` + `BlackDragonOverlay.exe`), `--onedir` COLLECT |
+| **Frozen paths** | ✅ | `controller.data_dir` frozen-aware; training `cwd=<exe_dir>`; surfacing `models/` + `data/` |
+| **Model lifecycle** | ✅ | Surfaced model → train → overwrite → reload → predict (closed loop) |
+| **Frozen training** | ✅ | `--train` flag; `--pipeline` design ready for v1.1 |
+| **RC test** | ✅ | 6/6 scenarios passed: install / dashboard / overlay / data / model / training |
+| **KB v1.0** | ✅ | 50 active docs; 16 legacy archived; ADR index; build/runtime/audit docs complete |
+| **Release files** | ✅ | LICENSE (MIT), CONTRIBUTING, SECURITY, updated README (551 tests, 94%) |
+
+## Key Architecture Decisions
+
+- **ADR-P5.2**: Dual-process architecture (replaces failed in-process Overlay experiments)
+- **ADR-P5.3**: Auto-start + recording defaults; training data surfacing
+- **PyInstaller**: Two-EXE split with shared deps; `--train` / `--overlay` flag-based frozen mode
 
 ## Dual-Track Status
 

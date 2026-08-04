@@ -185,4 +185,4 @@ python enrage.py  # 需要游戏运行中
 | 内部偏移量（20 个） | 小更新通常不变 |
 | 动作 ID 映射 | 大更新可能变化 |
 
-参见 [[Game_Reverse/Offset_System|Offset System]] 和 [[../docs/offsets_guide|Offsets Guide]]。
+参见 [[Game_Reverse/Offset_System|Offset System]] 和 [[../docs/legacy/offsets_guide|Offsets Guide]]。

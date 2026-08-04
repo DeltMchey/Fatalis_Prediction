@@ -160,7 +160,7 @@ hp_ptr = pm.read_longlong(monster + OFFSETS.MONSTER_HP_BASE)
 
 ## 修改指南
 
-游戏版本更新后需要修改偏移量时，参见 [[../docs/offsets_guide|Offsets Guide]]：
+游戏版本更新后需要修改偏移量时，参见 [[../docs/legacy/offsets_guide|Offsets Guide]]：
 1. 用 Cheat Engine 定位新基址
 2. 更新 `offsets.py` 中的对应值
 3. 运行 `test_offsets.py` 验证

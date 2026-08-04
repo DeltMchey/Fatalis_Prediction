@@ -1,8 +1,10 @@
 # ADR-P5.2: Overlay Architecture Decision
 
 - **Date**: 2026-08-03
-- **Status**: Decided (not yet implemented)
+- **Status**: Decided (implemented in P5.3)
 - **Author**: Architect
+
+> **Implementation Note**: P5.2 explored in-process overlay lifecycle management via daemon thread + `queue.Queue` commands. Due to DPG 2.x / GLFW single-thread limitation, this approach was **replaced** by the P5.3 dual-process architecture (Dashboard + Overlay as separate Python processes). See [[ADR-P5.3-auto-start|ADR-P5.3]] for the follow-up decision on auto-start and recording defaults.
 
 ---
 

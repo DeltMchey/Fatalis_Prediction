@@ -4,14 +4,14 @@
 
 ## Phase Overview
 
-| Phase  | Name                           | Status       | Est. Days | Key Deliverables                                                                    | Tag    |
-| ------ | ------------------------------ | ------------ | --------- | ----------------------------------------------------------------------------------- | ------ |
-| **P1** | 项目优化 (Project Standardization) | **Complete** | 2         | README, .gitignore, requirements.txt, directory structure                           | v0.1.0 |
-| **P2** | P0 修复 (Critical Fixes)         | **Complete** | 3         | Logging, unified actions.py, centralized offsets.py, posture FSM, bare except sweep | v0.2.0 |
-| P3     | 测试体系 (Test Safety Net)         | **Complete** | 3         | 182 tests (60% coverage), GitHub Actions CI                                         | v0.3.0 |
-| P4     | 架构重构 (Architecture Refactor)   | **Active**   | 5         | src/core/, src/data/, src/model/, src/ui/, main.py                                  | v0.4.0 |
-| P5     | 模型工程化 (Model Engineering)      | Planned      | 4         | Model versioning, incremental learning, docs, GitHub Release                        | v1.0.0 |
-|        |                                |              |           |                                                                                     |        |
+| Phase  | Name                           | Status         | Key Deliverables                                                                    | Tag    |
+| ------ | ------------------------------ | -------------- | ----------------------------------------------------------------------------------- | ------ |
+| **P1** | 项目优化 (Project Standardization) | **Complete**   | README, .gitignore, requirements.txt, directory structure                           | v0.1.0 |
+| **P2** | P0 修复 (Critical Fixes)         | **Complete**   | Logging, unified actions.py, centralized offsets.py, posture FSM, bare except sweep | v0.2.0 |
+| P3     | 测试体系 (Test Safety Net)         | **Complete**   | 182 tests (60% coverage), GitHub Actions CI                                         | v0.3.0 |
+| P4     | 架构重构 (Architecture Refactor)   | **Complete**   | src/core/, src/data/, src/model/, src/ui/, main.py                                  | —      |
+| P5     | 控制中心 (Dashboard + Overlay)     | **In Progress** | Dashboard UI (done), Bootstrap (done), Overlay integration (deferred)               | —      |
+| P6     | 模型工程化 (Model Engineering)     | Planned        | Model versioning, incremental learning, docs, GitHub Release                        | —      |
 
 ## P1 — Project Standardization (Active)
 
@@ -88,20 +88,52 @@ Sequential extraction from `ai_engine.py`:
 
 ---
 
+### P5 — Control Center (In Progress)
+
+**P5 Dashboard ✅, P5.1 Bootstrap ✅, P5.2 Overlay Integration Deferred**
+
+#### P5 — Dashboard
+- [x] **AppController** → `src/app/controller.py` — lifecycle coordinator
+- [x] **AppConfig** → `src/app/config.py` — JSON settings persistence
+- [x] **Dashboard UI** → `src/dashboard/main_window.py` — control panel (tabs, StatusBar, LogView, TrainingPanel)
+- [x] **StatusBar** → `src/dashboard/status_bar.py` — game/model/record/overlay indicators
+- [x] **LogView** → `src/dashboard/log_view.py` — real-time log display (QueueHandler)
+- [x] **TrainingPanel** → `src/dashboard/training_panel.py` — subprocess training UI
+- [x] **launch.py** → composition root (bootstrap + GameService + Dashboard)
+- [x] CJK font → `src/ui/fonts.py` — shared msyh.ttc loading
+- [x] Bug fixes: window no_resize/no_move, font garbled, bootstrap import
+
+#### P5.1 — Bootstrap + Game-less Mode
+- [x] **DependencyChecker** → `src/bootstrap/checker.py` — Python version + pip deps
+- [x] **GameService** → `src/app/game_service.py` — background detection + attach/detach
+- [x] **Game-less startup** — Dashboard runs without game; auto-attach on detection
+- [x] **launch.py no module-level pymem** — bootstrap runs before pymem import
+
+#### P5.2 — Overlay Integration (EXPERIMENTAL — Deferred)
+- [x] **Attempted: OverlayService thread model** — failed (GLFW main-thread restriction)
+- [x] **Attempted: Single-context multi-viewport** — failed (widgets render only on primary viewport)
+- [x] **Attempted: Command queue + thread** — failed (same GLFW violation)
+- [x] **ADR-P5.2** → `obsidian/docs/architecture/ADR-P5.2-overlay-process.md`
+- [ ] **Dual-process architecture** (future): `overlay.py` standalone + `launch.py` subprocess launcher
 ## Current State Summary
 
-- **Phase**: P4 (Architecture Refactor) — **COMPLETE**; v0.5.0 stabilization done
-- **Project runs**: Yes — `python main.py` (P4+ entry) or `python ai_engine.py` (legacy fallback)
-- **Tests**: **385** (17 test files, 100% pass rate)
-- **Coverage**: **72%** overall; 100% config + data pipeline + state_tracker + memory_reader + recorder + overlay + main; 99% predictor; 43% ai_engine (legacy wiring)
-- **Extracted modules** (wired via main.py):
-  - `src/core/state_tracker.py` — CombatStateTracker (156 lines, 50 tests, 100%)
-  - `src/core/memory_reader.py` — MemoryReader (183 lines, 27 tests, 100%)
-  - `src/model/predictor.py` — ActionPredictor (201 lines, 31 tests, 99%)
-  - `src/data/recorder.py` — CombatRecorder (201 lines, 34 tests, 100%)
-  - `src/ui/overlay.py` — OverlayUI (289 lines, 41 tests, 100%)
-  - `main.py` — composition root (85 lines, 20 tests, 100%)
-- **Dual-track status**: `ai_engine.py` God Class retained as legacy reference + P3 test-compat entry; `python main.py` is the recommended P4+ entry
-- **Cleanup (v0.5.0)**: `enrage.py` + 8 P2/P3 reports → `archive/`; README/CHANGELOG/requirements updated
+- **Phase**: P5 (Control Center) — Dashboard ✅, P5.1 Bootstrap ✅, P5.2 Overlay Integration deferred
+- **Project runs**: Yes — `python launch.py` (P5 Dashboard) or `python main.py` (P4 overlay)
+- **Tests**: **510** (20 test files, 100% pass rate)
+- **Coverage**: **72%** overall; Dashboard components 85-98%; P4 core 100%
+- **P5 New modules**:
+  - `src/app/controller.py` — AppController (332 lines, lifecycle + status + training)
+  - `src/app/config.py` — AppConfig (87 lines, JSON persistence)
+  - `src/app/game_service.py` — GameService (95 lines, bg game detection)
+  - `src/bootstrap/checker.py` — DependencyChecker (173 lines, env check + pip)
+  - `src/dashboard/main_window.py` — Dashboard (167 lines, DPG tabs + status)
+  - `src/dashboard/status_bar.py` — StatusBar (56 lines)
+  - `src/dashboard/log_view.py` — LogView (60 lines)
+  - `src/dashboard/training_panel.py` — TrainingPanel (62 lines)
+  - `src/ui/fonts.py` — Shared CJK font (62 lines)
+  - `launch.py` — P5 composition root (61 lines)
+- **P4 core status**: `src/core/`, `src/model/`, `src/data/` — zero modifications since P4.6
+- **P5.2 experiment** (commit `6952114`): OverlayService thread model saved as historical reference
+- **Next**: Revert P5.2 experimental overlay code → implement dual-process architecture
 - **CI/CD**: GitHub Actions (pytest + coverage on Windows/Ubuntu, Python 3.11/3.12)
-- **Version control**: P1+P2+P3+P4.1 committed; P4.2+P4.3+P4.4+P4.5 committed; P4.6 + v0.5.0 cleanup pending commit
+- **ADR**: `obsidian/docs/architecture/ADR-P5.2-overlay-process.md`

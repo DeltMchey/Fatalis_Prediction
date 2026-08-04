@@ -1,104 +1,137 @@
 ---
 title: Data Flow
 tags:
+  - architecture
   - data
   - pipeline
   - CSV
-  - ETL
-created: 2026-07-26
-updated: 2026-07-26
+created: 2026-08-04
+updated: 2026-08-04
 ---
 
-# Data Flow
+# Data Flow — BlackDragon v1.0
 
-## 概述
+> 数据全链路：游戏内存 → 录制 → 清洗 → 训练 → 推理（合并旧 AI_Pipeline + Data_Flow）。
 
-BlackDragon 的数据流从游戏内存开始，经过采集→清洗→训练→推理的完整链路。
+## 1. 全链路图
 
 ```mermaid
-graph TD
-    subgraph "数据采集"
-        GAME[MonsterHunterWorld.exe<br/>进程内存] -->|pymem 每 0.1s| RAW[17× 原始 CSV<br/>fatalis_combat_data_*.csv]
+graph LR
+    subgraph "在线（双进程）"
+        GAME[MonsterHunterWorld.exe]
+        MEM[MemoryReader<br/>pymem]
+        ST[CombatStateTracker]
+        PRED[ActionPredictor]
+        REC[CombatRecorder]
+        CSV[data/fatalis_combat_data_*.csv]
+        UI[OverlayUI / Dashboard]
+        GAME -->|pymem| MEM
+        MEM --> ST
+        ST --> REC
+        MEM --> REC
+        REC --> CSV
+        ST --> PRED
+        PRED --> UI
     end
-
-    subgraph "数据清洗"
-        RAW --> UPGRADE[data_upgrade.py<br/>旧数据补全 phase/enrage]
-        UPGRADE --> CLEAN[data_cleaner.py<br/>提取派生对]
-        CLEAN --> ML[ML_Ready_Dataset.csv<br/>~88KB 训练集]
-    end
-
-    subgraph "模型训练"
-        ML --> TRAIN[train_lgbm.py<br/>LightGBM 多分类]
-        TRAIN --> MODEL[fatalis_ai_model.pkl<br/>~18MB]
-        TRAIN --> CHART[feature_importance.png]
-    end
-
-    subgraph "在线推理"
-        GAME -->|pymem 每 0.5s| INFER[特征提取<br/>6 维向量]
-        MODEL -->|joblib.load| INFER
-        INFER --> OVERLAY[透明悬浮窗<br/>Top-3 预测]
+    subgraph "离线（独立脚本）"
+        CLEAN[data_cleaner.py]
+        ML[data/ML_Ready_Dataset.csv]
+        TRAIN[train_lgbm.py]
+        MODEL[models/fatalis_ai_model.pkl]
+        CSV --> CLEAN
+        CLEAN --> ML
+        ML --> TRAIN
+        TRAIN --> MODEL
+        MODEL -->|joblib.load| PRED
     end
 ```
 
-## 原始数据格式
+## 2. 在线路径：推理
 
-### fatalis_combat_data_*.csv（录制输出）
+```
+Game RAM (raw bytes)
+  → MemoryReader.read_* (Python float/int)
+  → CombatStateTracker (派生状态: phase/enrage/posture/nova)
+  → ActionPredictor.predict(6 features)
+  → [(class_id, prob), ...]
+  → OverlayUI._compute_ai_display (格式化文本)
+  → DPG set_value (显示)
+```
 
-| 列名 | 类型 | 说明 | 示例值 |
-|------|------|------|--------|
-| timestamp | float | Unix 时间戳 | 1716543200.123 |
-| hp_percent | float | HP 百分比 (0-1) | 0.85 |
-| phase | int | 战斗阶段 (1/2/3) | 1 |
-| is_enraged | int | 发怒状态 (0/1) | 0 |
-| distance | float | 玩家-怪物 XZ 距离 | 850.3 |
-| relative_angle | float | 相对角度 (-180~180) | -45.2 |
-| posture | int | 怪物姿态 (0-4) | 1 |
-| action_id | int | 原始动作 ID（动画帧） | 38 |
+**数据格式转换**：
+| 阶段 | 数据 | 说明 |
+|------|------|------|
+| pymem 读取 | `pm.read_float/int/longlong` | raw bytes → Python 数值 |
+| 状态计算 | `calc_distance_2d` / `calc_relative_angle` | 坐标 → 特征 |
+| 推理 | `predict_proba` → filter → renormalize → top-k | 概率数组 → Top-3 |
+| 显示 | `ACTION_DB.get(id)` | ID → 中文招式名 |
 
-**产生方式**: `data_logger_thread()` 每 0.1s 写入一行。仅在 zone==417（虚黑城）时工作。
+## 3. 在线路径：录制
 
-### 旧版数据问题
-
-部分历史 CSV 缺少 `phase` 和 `is_enraged` 列。通过 `data_upgrade.py` 补全：
-- Phase 从 `hp_percent` 回填
-- Enrage 从怒吼动作 +180s 软计时器回溯
-
-## 清洗后数据格式
-
-### ML_Ready_Dataset.csv（训练集）
+**CSV 列**（8 列，`CombatRecorder._COLUMNS` 单源）：
 
 | 列名 | 类型 | 说明 |
 |------|------|------|
-| distance | float | 玩家-怪物 XZ 距离 |
+| timestamp | float | Unix 时间戳 |
+| hp_percent | float | HP 百分比 (0-1) |
+| phase | int | 阶段 (1/2/3) |
+| is_enraged | int | 发怒 (0/1) |
+| distance | float | XZ 距离 |
 | relative_angle | float | 相对角度 |
-| posture | int | 怪物姿态 (0-4) |
-| previous_action | int | 上一招 Base ID（合并后） |
-| phase | int | 战斗阶段 (1/2/3) |
-| is_enraged | int | 发怒状态 (0/1) |
-| **next_action** | int | **标签**：下一招 Base ID |
+| posture | int | 姿态 (0-4) |
+| action_id | int | 原始动作 ID |
 
-**样本量**: 数千条派生对（17 次狩猎）
+**文件命名**：`data/fatalis_combat_data_YYYYMMDD_HHMMSS.csv`
 
-## 数据变换关键节点
+**门控**：`is_recording == True` 且 `zone == 417`（虚黑城）。帧间隔 0.1s。
 
-| 节点 | 输入 | 输出 | 变换逻辑 |
-|------|------|------|----------|
-| **动作合并** | raw_action_id (动画帧) | base_action_id (起手式) | `ACTION_MAPPING` 查表 |
-| **姿态追踪** | action_id 序列 | posture ∈ {0,1,2,3,4} | 状态机：特定招式触发切换 |
-| **派生提取** | 逐帧 CSV | (状态, 上一招) → 下一招 | 仅 action 切换时记录，排除无效招式 |
-| **物理过滤** | ML 概率 + phase/posture | 过滤后概率 | 不合法招式概率归零 |
-| **发怒检测** | 怪物内存 +0x1BE30 | is_enraged ∈ {0,1} | 0 < timer < max |
+**注意**：双进程各自有独立 Recorder，各自写独立 CSV 文件（P5.3 设计）。
 
-## 数据目录结构
+## 4. 离线路径：清洗（data_cleaner.py）
 
-```
-data/
-├── fatalis_combat_data_20260426_084938.csv  # 第 1 场
-├── fatalis_combat_data_20260426_091945.csv  # 第 2 场
-├── ...
-├── fatalis_combat_data_20260707_223118.csv  # 第 17 场
-└── ML_Ready_Dataset.csv                     # 清洗后的训练集（全量合并）
+```mermaid
+graph TD
+    CSV[原始 CSV ×17] --> F1[过滤 distance >= 5000]
+    F1 --> F2[过滤 action_id == 1]
+    F2 --> MAP[ACTION_MAPPING 合并<br/>38,39,40 → 37]
+    MAP --> FS[姿态 FSM 跨招式追踪]
+    FS --> EX[派生对提取<br/>prev_action → next_action]
+    EX --> EXC[排除小动作/演出/倒地<br/>MINOR_AND_PASSIVE ∪ SCRIPTED_IDS]
+    EXC --> OUT[ML_Ready_Dataset.csv]
 ```
 
-> [!warning] 数据版本管理（技术债 #8）
-> 当前 CSV 无 schema version 标识，`data_upgrade.py` 通过试探列名判断格式。P5 计划引入 `schema_version` 列，实现自动化版本迁移。
+**输出列**（7 列）：`distance, relative_angle, posture, previous_action, phase, is_enraged, next_action`（标签）
+
+## 5. 离线路径：训练（train_lgbm.py）
+
+```
+ML_Ready_Dataset.csv
+  → 过滤出现 < 3 次的罕见招式
+  → 类别特征编码（posture/previous_action/phase/enrage → category）
+  → 8:2 train/test split (random_state=42)
+  → LightGBM 多分类（300 estimators, early_stopping=15）
+  → 评估（Accuracy + Top-3 命中率）
+  → models/fatalis_ai_model.pkl + feature_importance.png
+```
+
+详见 [[AI_Model/Training_Pipeline|Training Pipeline]]。
+
+## 6. 配置数据流
+
+```
+blackdragon_config.json
+  ├── AppConfig.load()  ← Dashboard 进程（launch.py）
+  └── AppConfig.load()  ← Overlay 进程（overlay.py）
+       ↓
+       AppConfig.save() ← Dashboard 进程（设置变更时）
+```
+
+**跨进程共享模式**：两个进程在启动时**各自独立**加载同一份 `blackdragon_config.json`。运行时修改配置不会同步到已运行的另一个进程——需要重启生效。`auto_start_overlay` / `auto_record` 在各自启动时生效。
+
+`AppConfig.save()` 已定义但当前运行时未主动调用（保留用于未来 Dashboard 设置面板持久化用户偏好）。
+
+## 7. 数据版本管理（技术债）
+
+- 当前 CSV 无 `schema_version` 列
+- `data_upgrade.py` 通过试探列名判断旧格式，为旧 CSV 回填 `phase` / `is_enraged`
+- P6 计划引入 schema versioning

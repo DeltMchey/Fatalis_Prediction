@@ -2,11 +2,11 @@
 
 ## Current Phase
 
-**P4 Architecture Refactor COMPLETE → v0.5.0 Stabilized (P5 Planned)**
+**P5 Dashboard Complete → P5.2 Overlay Integration Deferred (see ADR-P5.2)**
 
 ## Current Goal
 
-Architecture refactoring COMPLETE. All 6 P4 steps done (5 modules extracted + main.py composition root). Project stabilized at v0.5.0: directory cleaned, docs updated, 385 tests green. Next: P5 — Model Engineering (planned, not started).
+P5 Dashboard control center is functional. P5.2 overlay integration hit a hard limitation: DPG 2.x + GLFW cannot create windows from non-main threads. The recommended path is dual-process architecture (Dashboard + Overlay as separate Python processes). See `obsidian/docs/architecture/ADR-P5.2-overlay-process.md` for the full decision record.
 
 ## Dual-Track Status
 
@@ -221,13 +221,76 @@ Sequential extraction:
 
 None. P4 Step 6 (Integration) is ready to begin.
 
+### Current Development State
+
+| Component | Status | Notes |
+|-----------|:------|------|
+| **Dashboard UI** | ✅ Complete | DPG control panel: tabs for console/training/log/settings. Game-less startup (pauses until pymem detects). StatusBar, LogView, TrainingPanel, button enable/disable. |
+| **Bootstrap** | ✅ Complete | `DependencyChecker` — Python version + pip dep check + auto-install (before DPG starts). |
+| **GameService** | ✅ Complete | Background daemon thread — polls for MonsterHunterWorld.exe every 2s. `attach_game()` creates P4 modules when found. 3-failure threshold for detach. |
+| **Overlay Integration** | ❌ Deferred | Three approaches failed due to DPG 2.x / GLFW main-thread requirement. See "Failed Experiments" below. |
+| **CJK Font** | ✅ Complete | Shared `src/ui/fonts.py` — Dashboard and Overlay both use `setup_cjk_font()` (msyh.ttc on Windows, fallback on others). |
+
+#### Entry Points
+
+| Command | Function |
+|---------|----------|
+| `python launch.py` | P5 Dashboard control center (recommended) |
+| `python main.py` | P4 standalone transparent overlay (legacy) |
+| `python ai_engine.py` | Legacy God Class (reference only) |
+
+#### Architecture Snapshot
+
+```
+src/
+├── core/          ← P4 (state_tracker, memory_reader)
+├── model/         ← P4 (predictor)
+├── data/          ← P4 (recorder)
+├── ui/
+│   ├── overlay.py ← P4.5 (standalone overlay — UNCHANGED from P4.5)
+│   └── fonts.py   ← P5.1 (shared CJK font)
+├── app/           ← P5 (controller, game_service, config)
+├── bootstrap/     ← P5.1 (dependency checker)
+├── dashboard/     ← P5 (main_window, log_view, training_panel, status_bar)
+└── config/        ← P2 (actions, offsets — single source of truth)
+```
+
+### Failed Experiments
+
+#### P5.2: OverlayService Integration (commit `6952114`)
+
+**Goal**: Dashboard and transparent overlay coexist in one process.
+
+**Attempted Approaches**:
+
+| # | Method | Failure Reason |
+|---|--------|---------------|
+| A | Single DPG context + `create_viewport()` for secondary viewport | DPG 2.x renders `dpg.window()` widgets **only on primary viewport**. Secondary viewport is blank. |
+| B | Overlay daemon thread + own DPG context | GLFW requires `glfwCreateWindow()` on **main thread only**. Non-main thread → undefined behavior → crash. |
+| C | OverlayService + cross-thread `queue.Queue` commands | Same GLFW violation as B. Command routing doesn't change where GLFW calls execute. |
+
+**Root Cause**: `dearpygui==2.3` uses GLFW as the windowing backend. GLFW requires all windowing operations on the thread that initialized the library. DPG 2.x cannot run two windowed contexts simultaneously in one process.
+
+**Decision**: Move to dual-process architecture. Full record: `obsidian/docs/architecture/ADR-P5.2-overlay-process.md`.
+
+### Next Steps
+
+1. **Revert P5.2 experimental code** — Restore `src/ui/overlay.py` to P4.5 standalone design. Remove overlay lifecycle methods from `AppController`. Restore `Dashboard` to remove overlay toggle button.
+2. **Create `overlay.py`** — Standalone script at project root. Wires MemoryReader + StateTracker + Predictor + Recorder + OverlayUI. Equivalent to `main.py` but tailored for dual-process use.
+3. **Rewrite `launch.py`** — Dual-process launcher: `subprocess.Popen(["python", "overlay.py"])` + Dashboard.
+4. **Test** — Ensure ≥510 tests pass; verify both processes run independently on real machine.
+5. **Tag** — `v0.5.0-dashboard` (stable Dashboard baseline before overlay process integration).
 ## Recent Decisions
 
-- **P4 Step 6 completed**: `main.py` composition root — 20 tests, 100% coverage, 385 total green
-- Zero-touch `ai_engine.py`: kept frozen for P3 test imports (85 tests) + legacy fallback
-- `main.py` is pure wiring — no business logic, no global mutable state (AST-verified)
-- Shared instances (MemoryReader/StateTracker/buffer/lock) created once, injected by reference
-- v0.5.0 cleanup: `enrage.py` + 8 P2/P3 reports → `archive/`; README badges 385/72%; CHANGELOG P4 entries; requirements comments
-- Fixed `test_main_integration.py` cross-platform import (stub pymem/dearpygui for Linux CI)
-- P4.6 Review: APPROVED — 0 blockers, 2 non-blocking suggestions
-- Next: P5 Model Engineering (planned, not started)
+#### Recent Decisions
+
+- **P5.2 Experiment** (commit `6952114`): Three overlay integration approaches attempted and documented.
+  - Solution A (single DPG context, `create_viewport()` + `configure_viewport(show=)`): widgets render only on primary viewport
+  - Solution B (overlay daemon thread, own DPG context): GLFW crash (non-main thread window creation)
+  - Solution C (OverlayService + `queue.Queue`): same GLFW crash as B
+  - **Decision**: Dual-process architecture — Dashboard and Overlay as separate Python processes
+  - **ADR**: `obsidian/docs/architecture/ADR-P5.2-overlay-process.md`
+- P5 Dashboard: ✅ functional — game detection, recording toggle, training subprocess, log view, CJK font
+- P5.1 Bootstrap + game-less startup: ✅ functional — dep checker, GameService, lazy P4 module attach
+- 510 tests pass (MPLBACKEND=Agg), P4 core untouched
+- `python launch.py` runs Dashboard (control panel); `python main.py` runs standalone overlay (legacy)

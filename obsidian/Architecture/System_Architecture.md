@@ -3,143 +3,140 @@ title: System Architecture
 tags:
   - architecture
   - system-design
+  - dual-process
   - BlackDragon
-created: 2026-07-26
-updated: 2026-07-26
+created: 2026-08-04
+updated: 2026-08-04
 ---
 
-# System Architecture
+# System Architecture — BlackDragon v1.0
 
-## 概述
+> 本文档描述**当前（P5.3 auto-start）**系统拓扑。历史架构见 `docs/legacy/architecture-v0/`。
 
-BlackDragon 采用 **Pipeline Architecture（管线架构）**，各模块通过文件系统耦合，无代码级 import 依赖。核心流程分为两大线程并行运行：**数据录制线程**（daemon）和 **UI 渲染线程**（main）。
+## 1. 进程结构总览
+
+BlackDragon v1.0 采用**双进程架构**（ADR-P5.2）：Dashboard 与 Overlay 是两个独立的 Python 进程，各自拥有独立的 DPG context 与主线程。
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Process 1: python launch.py  (Dashboard 控制中心)            │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ launch.py (composition root)                        │    │
+│  │   ├─ DependencyChecker.ensure()  → 环境检查          │    │
+│  │   ├─ AppConfig.load()            → 配置加载          │    │
+│  │   ├─ AppController(config)       → 生命周期协调       │    │
+│  │   ├─ [auto_start_overlay]        → spawn overlay.py  │    │
+│  │   ├─ GameService(controller)     → 后台游戏检测       │    │
+│  │   └─ Dashboard(controller).run() → DPG event loop    │    │
+│  └─────────────────────────────────────────────────────┘    │
+│    ├─ src/app/    AppController / AppConfig / GameService   │
+│    ├─ src/dashboard/  Dashboard / StatusBar / LogView /     │
+│    │                 TrainingPanel                          │
+│    └─ src/bootstrap/  DependencyChecker                     │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  Process 2: python overlay.py  (透明覆盖层)                  │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ overlay.py (composition root)                       │    │
+│  │   ├─ AppConfig.load()           → 配置加载            │    │
+│  │   ├─ _find_game_process()       → 重试连接游戏        │    │
+│  │   ├─ MemoryReader / StateTracker / Predictor /      │    │
+│  │   │  Recorder (P4 模块)                              │    │
+│  │   ├─ CombatRecorder.start()     → daemon 录制        │    │
+│  │   └─ OverlayUI.run()            → DPG event loop     │    │
+│  └─────────────────────────────────────────────────────┘    │
+│    ├─ src/core/   MemoryReader / CombatStateTracker         │
+│    ├─ src/model/  ActionPredictor                           │
+│    ├─ src/data/   CombatRecorder                            │
+│    └─ src/ui/     OverlayUI / setup_cjk_font                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 为什么双进程？
+
+DPG 2.x 使用 GLFW 作为窗口后端，GLFW 要求所有 `glfwCreateWindow()` 调用在**主线程**执行。单进程内无法同时运行两个窗口化 context（见 ADR-P5.2 三种失败方案）。进程级隔离使每个进程有独立的 DPG context + 主线程。
+
+## 2. 外部依赖
+
+| 依赖 | 说明 |
+|------|------|
+| `MonsterHunterWorld.exe` | 游戏进程（pymem 连接） |
+| `blackdragon_config.json` | 共享配置（两个进程各自独立加载） |
+| `data/` | 录制 CSV 输出目录 |
+| `models/fatalis_ai_model.pkl` | AI 模型（两个进程各自加载） |
+| `C:/Windows/Fonts/msyh.ttc` | CJK 字体（中文渲染） |
+
+## 3. 组件交互（Mermaid）
 
 ```mermaid
 graph TD
-    subgraph "Game Process"
-        MHW[MonsterHunterWorld.exe]
+    subgraph "Dashboard Process"
+        LAUNCH[launch.py]
+        CTRL[AppController]
+        GS[GameService daemon]
+        DASH[Dashboard.run<br/>DPG event loop]
+        REC1[CombatRecorder daemon]
+        P4A[P4 数据模块<br/>MemoryReader/StateTracker/Predictor/Recorder]
+
+        LAUNCH --> CTRL
+        LAUNCH --> DASH
+        GS -->|detect MHW.exe| CTRL
+        CTRL -->|attach_game| P4A
+        P4A --> REC1
+        DASH -->|poll status / commands| CTRL
+        CTRL -->|start_overlay / stop_overlay| OV
     end
 
-    subgraph "BlackDragon"
-        MEM[pymem Memory Reader]
-        
-        subgraph "Thread 1: Daemon"
-            LOG[data_logger_thread<br/>每 0.1s 循环]
-            CSV[fatalis_combat_data_*.csv]
-        end
+    subgraph "Overlay Process"
+        OV[overlay.py]
+        OVUI[OverlayUI.run<br/>DPG event loop]
+        REC2[CombatRecorder daemon]
+        P4B[P4 数据模块<br/>MemoryReader/StateTracker/Predictor/Recorder]
 
-        subgraph "Thread 0: Main"
-            UI[Ultimate_Radar_UI<br/>dearpygui 渲染循环]
-            STATE[Combat State Machine<br/>Phase / Posture / Enrage / Nova]
-            AI[LightGBM Inference<br/>每 0.5s]
-            FILTER[Physical Rule Filter<br/>Phase + Posture constraints]
-        end
-        
-        OVERLAY[Transparent Overlay<br/>Top-3 Predictions]
+        OV --> P4B
+        P4B --> REC2
+        P4B --> OVUI
     end
 
-    subgraph "Offline Pipeline"
-        CLEAN[data_cleaner.py]
-        TRAIN[train_lgbm.py]
-        MODEL[fatalis_ai_model.pkl]
-    end
-
-    MHW -->|pymem.read_*| MEM
-    MEM --> LOG
-    MEM --> STATE
-    LOG --> CSV
-    CSV --> CLEAN
-    CLEAN -->|ML_Ready_Dataset.csv| TRAIN
-    TRAIN --> MODEL
-    MODEL -->|joblib.load| AI
-    STATE --> AI
-    AI --> FILTER
-    FILTER --> UI
-    UI --> OVERLAY
+    GAME[MonsterHunterWorld.exe] -->|pymem| P4A
+    GAME -->|pymem| P4B
+    CFG[blackdragon_config.json] --> LAUNCH
+    CFG --> OV
 ```
 
-## 核心组件
-
-### 1. 内存读取层
-
-- **实现**: `ai_engine.py` 中的 `get_ptr()` 和 `find_monster()`
-- **功能**: 多级指针解引用、遍历 10 个怪物槽位、读取 HP/坐标/动作/发怒数据
-- **依赖**: pymem, `src/config/offsets.py` (23 个偏移量字段)
-
-### 2. 状态机层
-
-- **Phase 状态**: 根据 HP% 推导（P1: >78%, P2: 50-78%, P3: <50%）
-- **Posture 状态**: 5 态 FSM（站立/趴下/飞行/倒地/演出），由招式触发切换
-- **Enrage 状态**: 硬件级直接读取引擎内部秒表（`0 < timer < max`）
-- **Nova 状态**: HP 阈值 FSM（78%/50%/41%/26%/6%），特定动作重置 warning
-
-### 3. 数据录制层
-
-- **实现**: `data_logger_thread()` — daemon 线程
-- **频率**: 每 0.1s 写入一行 CSV
-- **输出**: `data/fatalis_combat_data_YYYYMMDD_HHMMSS.csv`
-- **列**: timestamp, hp_percent, phase, is_enraged, distance, relative_angle, posture, action_id
-
-### 4. AI 推理层
-
-- **模型加载**: joblib.load("models/fatalis_ai_model.pkl") ≈ 18MB
-- **推理频率**: 每 0.5s（动作变化时立即触发）
-- **输入特征**: 6 维（distance, relative_angle, posture, previous_action, phase, is_enraged）
-- **两层预测架构**:
+## 4. 离线管线（独立脚本，非进程内）
 
 ```
-model.predict_proba(features)
-    → Phase Filter (阶段不合法→概率 0)
-    → Posture Filter (姿态不合法→概率 0)
-    → Renormalize (重归一化)
-    → Top-3 (概率 > 3%)
+data/fatalis_combat_data_*.csv  (17+ 个录制文件)
+        │
+        ▼  data_cleaner.py  (动作合并 / 姿态追踪 / 派生提取 / 过滤)
+data/ML_Ready_Dataset.csv
+        │
+        ▼  train_lgbm.py  (LightGBM 多分类训练)
+models/fatalis_ai_model.pkl  +  models/feature_importance.png
 ```
 
-### 5. UI 渲染层
+## 5. 与 legacy 的关系
 
-- **框架**: dearpygui 2.3
-- **窗口属性**: 420×350, 无边框, 置顶, 背景透明, 鼠标穿透
-- **位置**: 屏幕右上角 (width-440, height×0.25)
-- **显示内容**: 动作名、Phase/Enrage、距离/角度/HP%、Nova 警告（红色）、AI Top-3（绿色）
-
-## 线程模型
-
-```
-Thread 1 (daemon): data_logger_thread()
-  ├─ 每 0.1s: read memory → compute → write CSV → append action_buffer
-  ├─ 有 lock 保护 action_buffer 写入
-  └─ shared_state 无锁保护（已知技术债 #5）
-
-Thread 0 (main): Ultimate_Radar_UI.run()
-  ├─ dearpygui render loop: update_logic() every frame
-  └─ read memory → state update → AI prediction (every 0.5s) → render overlay
-```
-
-## 模块间依赖
-
-> [!note] 关键设计
-> 模块间**无代码级 import**，全部通过**文件系统耦合**：
-> - `ai_engine.py` → 写入 CSV → `data_cleaner.py` 读取
-> - `data_cleaner.py` → 写入 ML_Ready_Dataset.csv → `train_lgbm.py` 读取
-> - `train_lgbm.py` → 写入 .pkl 模型 → `ai_engine.py` 加载
-
-## 目录映射
-
-| 目录 | 内容 | 说明 |
+| 入口 | 状态 | 说明 |
 |------|------|------|
-| `src/config/` | actions.py, offsets.py | 唯一数据源（动作 DB + 偏移量） |
-| `src/` | logging_config.py | 统一日志配置 |
-| `data/` | 原始 CSV + ML_Ready_Dataset.csv | 战斗数据（gitignored） |
-| `models/` | .pkl 模型 + feature_importance.png | 训练产物（gitignored） |
-| `tests/` | 7 个测试文件 + conftest.py | pytest 测试套件 |
-| `archive/` | mod.py | 已废弃的旧版悬浮窗 |
-| `docs/` | 参考文档 | 招式表、偏移量指南等 |
+| `launch.py` | ✅ 推荐 | 双进程控制中心 |
+| `overlay.py` | ✅ 推荐 | 独立覆盖层进程 |
+| `main.py` | ⚠️ legacy | P4.6 composition root（单进程 overlay） |
+| `ai_engine.py` | ⚠️ legacy | God Class，保留供 P3 测试导入与回退 |
 
-## 已知技术债
+P4 模块（`src/core/`, `src/model/`, `src/data/`, `src/ui/overlay.py`）自提取后保持零改动（dual-track 约束）。
 
-参见 [[../docs/Tech_debt|Tech Debt]] 完整清单：
+## 6. 目录映射
 
-- #4: God Class — ai_engine.py 承担 5 种职责（计划 P4 拆解）
-- #5: 全局可变状态无锁保护（P4 引入 CombatState 类）
-- #6: 无模型版本管理（P5 实现）
-- 更多见 [[Development/Refactoring_Roadmap|Refactoring Roadmap]]
+| 目录 | 内容 | 进程 |
+|------|------|:---:|
+| `src/core/` | state_tracker, memory_reader | 双进程 |
+| `src/model/` | predictor | 双进程 |
+| `src/data/` | recorder | 双进程 |
+| `src/ui/` | overlay, fonts | 双进程（`fonts.py` 被两个进程共享） |
+| `src/app/` | controller, config, game_service | Dashboard |
+| `src/dashboard/` | main_window, status_bar, log_view, training_panel | Dashboard |
+| `src/bootstrap/` | checker | Dashboard |
+| `src/config/` | actions, offsets | 双进程（唯一数据源） |

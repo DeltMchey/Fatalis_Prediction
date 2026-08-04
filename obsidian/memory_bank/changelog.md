@@ -4,6 +4,93 @@
 
 ---
 
+### 2026-08-04 — P5.3 Auto-Start + Recording Default (ADR-P5.3)
+
+#### Phase
+P5 Control Center (控制中心) — Auto-Start ✅
+
+#### Completed
+- **ADR-P5.3 方案 A 实施**（`obsidian/docs/architecture/ADR-P5.3-auto-start.md`）
+  - `src/app/config.py`: `auto_start_overlay` 默认值 `False` → **`True`**；新增 `auto_record: bool = True`
+  - `launch.py`: 启动覆盖层子进程改为 **`if config.auto_start_overlay: controller.start_overlay()`**（默认自动启动）
+  - `overlay.py`: 读取共享 `AppConfig` 决定录制默认状态（`CombatStateTracker(is_recording=config.auto_record)`）；新增游戏连接**重试循环**（`_RETRY_INTERVAL=2.0`，`_MAX_RETRIES=60`）——Dashboard 启动可先于游戏，overlay 在游戏出现后自动进入工作状态
+  - `src/app/controller.py`: `attach_game` 使用 `self._config.auto_record` 初始化录制状态
+  - Dashboard 手动控制（start/stop overlay、toggle recording）**保持不变**
+
+#### API
+- `python launch.py` — 默认自动启动 Overlay 子进程 + Dashboard
+- 配置项: `auto_start_overlay=True`（默认）、`auto_record=True`（默认），可通过 `blackdragon_config.json` 关闭
+
+#### Design Decisions
+- 双进程架构保持（P5.3 / ADR-P5.2）——overlay 仍是独立子进程，不恢复线程 Overlay
+- overlay 重试循环使 launch 的"先启 overlay 后开游戏"场景无缝衔接
+- 配置默认值遵循需求（auto-start + auto-record 均默认开启）；用户可显式关闭
+- P4 core（`src/core/`、`src/model/`、`src/data/`、`main.py`）— **零 diff**
+
+#### Metrics
+- Tests: 532 → **541**（+9 net：新增 10，重命名 1）
+- Coverage: 总体 **94%**（此前 93%）；`overlay.py` 100%；`launch.py` 36%→**86%**
+- 新增测试：launch auto_start gating（3）、overlay retry（2）+ auto_record flow（2）、config defaults（2）、controller attach auto_record（2）
+
+#### Review
+- 待 reviewer 审查
+
+### 2026-08-04 — P5.3 Dual-Process Architecture Complete
+
+#### Phase
+P5 Control Center (控制中心) — Dual-Process Overlay ✅
+
+#### Completed
+- **P5.3: Dashboard + Overlay 双进程架构** (per ADR-P5.2)
+  - Reverted `src/ui/overlay.py` to P4.5 standalone design (removed P5.2 thread/queue/start/stop/show/hide command API) — `run()` is now the only lifecycle entry, blocking in the process's own main thread
+  - Cleaned `AppController`: removed OverlayUI in-process lifecycle from attach_game/detach_game/shutdown; added **subprocess-based** overlay management (`start_overlay`/`stop_overlay`/`is_overlay_running`) — Dashboard launches `python overlay.py`
+  - Added `overlay_script` config field (AppConfig, default `overlay.py`)
+  - Created `overlay.py` — standalone overlay process entry (composition root, equivalent to main.py)
+  - Rewrote `launch.py` — dual-process launcher: `controller.start_overlay()` (spawns overlay.py subprocess) + Dashboard
+  - Dashboard UX: "启动覆盖层" button now launches/terminates the overlay **subprocess** (no more in-process toggle); StatusBar shows overlay process status (运行中/未启动)
+
+#### API
+- `python launch.py` — 双进程: Overlay 子进程 + Dashboard 控制中心（推荐）
+- `python overlay.py` — 独立覆盖层进程
+- `python main.py` — P4 standalone overlay (legacy)
+
+#### Design Decisions
+- GLFW main-thread 限制通过**进程级隔离**解决：每个进程有自己的 DPG context + 主线程
+- `attach_game` 不再 import `src.ui.overlay`（dashboard 进程不创建 OverlayUI）
+- `detach_game` 不终止覆盖层子进程（独立进程，用户手动关闭）
+- Overlay 子进程 stdout/stderr 重定向到 DEVNULL（非交互进程）
+
+#### Metrics
+- Tests: 510 → **532** (+22 net: removed 8 P5.2 tests, added 30 P5.3 tests)
+- `overlay.py` coverage: **100%**; `src/ui/overlay.py` coverage: **100%**; overall ~93%
+- P4 core (`src/core/`, `src/model/`, `src/data/`) — **zero diff**
+- `main.py` (P4.6) untouched
+
+#### Review
+- P5.3 implementation complete, all tests pass (MPLBACKEND=Agg)
+
+### 2026-08-03 — P5.2 Overlay Integration Experiment (Deferred)
+
+#### Phase
+P5 Control Center (控制中心) — Experimental
+
+#### Attempted
+- **P5.2: Overlay Integration** — Three approaches tested to integrate transparent overlay with Dashboard
+  - Solution A: Single DPG context + `create_viewport()` multi-viewport → widgets render only on primary viewport
+  - Solution B: Overlay daemon thread + own DPG context → GLFW crash (non-main thread window creation)
+  - Solution C: OverlayService + cross-thread `queue.Queue` commands → same GLFW violation
+- Experiment saved as commit `6952114` (30 files, 510 tests)
+- ADR written: `obsidian/docs/architecture/ADR-P5.2-overlay-process.md`
+
+#### Root Cause
+`dearpygui==2.3` uses GLFW as windowing backend. GLFW requires all `glfwCreateWindow()` calls on the main thread. DPG 2.x cannot run two windowed contexts simultaneously in one process.
+
+#### Decision
+Dual-process architecture: Dashboard and Overlay as separate Python processes. Each has its own DPG context on its own main thread. Overlay integration deferred to next iteration.
+
+#### Metrics
+- Tests: 510 (all pass, P4 core unchanged)
+- Mock tests pass; real DPG on Windows fails at overlay thread creation
 ### 2026-08-03 — P4 Step 6 Complete + v0.5.0 Cleanup
 
 #### Phase

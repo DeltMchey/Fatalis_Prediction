@@ -5,157 +5,109 @@ tags:
   - pytest
   - coverage
   - CI
-created: 2026-07-26
-updated: 2026-07-26
+created: 2026-08-04
+updated: 2026-08-04
 ---
 
-# Testing Strategy
+# Testing Strategy — BlackDragon v1.0
 
-## 概述
+> 当前测试体系（P5.3 auto-start 状态：541 tests, 94% coverage）。历史版本见 `docs/legacy/development-v0/`。
 
-BlackDragon 的测试体系在 P3 阶段建立，目标是在 P4 大规模重构前为纯逻辑建立安全网。
-
-## 测试金字塔
+## 1. 测试金字塔
 
 ```
-        ┌──────┐
-        │ E2E  │  ← P5 补充（全链路游戏内测试）
-       ┌┤      ├┐
-       ││ 集成 ││  ← P3.4 建设中（数据管线集成测试）
-       │├──────┤│
-       ││ 单元 ││  ← P3.1-P3.3 已完成（纯函数 + Config）
-       └┴──────┴┘
+         ┌────────┐
+         │ E2E    │  ← 未实现（真机游戏内测试，需手动 checklist）
+        ┌┤────────┤┐
+        ││ 集成   ││  ← data_cleaner / data_upgrade / train_lgbm / entry points
+        │├────────┤│
+        ││ 单元   ││  ← P4 模块（state_tracker / memory_reader / predictor / recorder / overlay）
+        └┴────────┴┘
 ```
 
-## 当前测试指标
+## 2. 当前指标
 
 | 指标 | 值 |
 |------|-----|
-| **测试总数** | 147（7 个文件） |
-| **通过率** | 100% |
-| **整体覆盖率** | 29% |
-| **Config 模块覆盖率** | 100%（3/3 模块） |
-| **ai_engine.py 覆盖率** | 43% |
-| **CI 平台** | GitHub Actions（Ubuntu + Windows, Python 3.11/3.12） |
+| 总测试数 | **541**（22 个测试文件） |
+| 通过率 | 100%（`MPLBACKEND=Agg`） |
+| 总体覆盖率 | **94%** |
+| P4 core（state_tracker/memory_reader/recorder） | 100% |
+| predictor | 99% |
+| overlay.py / src/ui/overlay.py | 100% |
+| config 模块 | 100% (3/3) |
+| data 管线模块 | 100% (3/3) |
+| CI workflow | `.github/workflows/test.yml`（Windows + Ubuntu, Python 3.11/3.12） |
 
-## 测试文件清单
+## 3. 测试文件映射
 
-| # | 文件 | 测试数 | 阶段 | 测试目标 |
-|---|------|--------|------|----------|
-| 1 | `test_infrastructure.py` | 17 | P3.1 | Fixtures, pytest config, CI 自检 |
-| 2 | `test_actions.py` | 20 | P3.2 | ACTION_DB 完整性, 映射正确性, 集合互斥 |
-| 3 | `test_offsets.py` | 14 | P3.2 | GameOffsets 字段类型, 值, 不可变性 |
-| 4 | `test_logging.py` | 11 | P3.2 | setup_logging 返回, FileHandler, 编码 |
-| 5 | `test_math_logic.py` | 27 | P3.3A | distance, angle 计算, top-k 选择 |
-| 6 | `test_phase_filter.py` | 32 | P3.3B | Phase/posture 过滤, renormalize |
-| 7 | `test_nova.py` | 26 | P3.3C | Nova 阈值 FSM（初始化/检测/重置） |
+| 测试文件 | 数量 | 目标 |
+|----------|:---:|------|
+| test_infrastructure.py | 17 | fixtures, config, discovery, CI |
+| test_actions.py | 20 | ACTION_DB, ACTION_MAPPING, phase/posture sets |
+| test_offsets.py | 14 | GameOffsets dataclass, 字段值, 不可变性 |
+| test_logging.py | 11 | setup_logging, FileHandler |
+| test_math_logic.py | 27 | calc_distance_2d, calc_relative_angle, select_top_k |
+| test_phase_filter.py | 32 | filter_probs_by_phase/posture, renormalize |
+| test_nova.py | 26 | evaluate_nova |
+| test_data_upgrade.py | 11 | phase/enrage backfill, column order |
+| test_data_cleaner.py | 19 | ETL: mapping, FSM, filtering, corrupted CSV |
+| test_train_lgbm.py | 5 | mini training, model output, rare class filter |
+| test_state_tracker.py | 50 | CombatStateTracker 全方法 |
+| test_memory_reader.py | 27 | MemoryReader 指针链/读取 |
+| test_predictor.py | 31 | ActionPredictor 加载/预测/过滤 |
+| test_recorder.py | 34 | CombatRecorder 门控/录制/生命周期 |
+| test_overlay.py | 41 | OverlayUI 状态/显示/DPG 生命周期 |
+| test_app_config.py | 12 | AppConfig 默认值/持久化 |
+| test_app_controller.py | 40 | AppController 生命周期/子进程 |
+| test_game_service.py | 12 | GameService 检测/附着/分离 |
+| test_bootstrap_checker.py | 26 | DependencyChecker 检查/安装 |
+| test_dashboard.py | 25 | Dashboard UI 组件/回调 |
+| test_launch.py | 11 | launch.py 结构 + auto_start 行为 |
+| test_overlay_entry.py | 24 | overlay.py 组装 + 重试循环 |
+| test_main_integration.py | 20 | main.py composition root |
 
-## 测试设计原则
+## 4. Mock 策略
 
-### 1. 只测纯逻辑
+| 组件 | 策略 |
+|------|------|
+| MemoryReader | `MagicMock(spec=MemoryReader)`（无 pymem 依赖） |
+| ActionPredictor | `MagicMock(spec=ActionPredictor)`（无模型依赖） |
+| CombatStateTracker | **真实实例**（纯逻辑） |
+| DPG | `patch("src.ui.overlay.dpg")` / `patch("src.dashboard.*.dpg")`（不启动真实窗口） |
+| pymem | 跨平台 stub 预装 + 函数级 monkeypatch |
+| AppController | `MagicMock`（Dashboard 测试） |
+| subprocess.Popen | `monkeypatch`（子进程测试） |
 
-不依赖游戏进程的纯函数优先测试：
-- `calc_distance_2d()` — 数学计算
-- `filter_probs_by_phase()` — 数组操作
-- `evaluate_nova()` — 状态机
+## 5. 跨平台策略
 
-### 2. 使用 fixtures 隔离
+- **Windows**：真实环境（pymem/dearpygui 已装）
+- **Linux CI**：模块级预装 stub（`pymem`, `dearpygui`）→ import 成功
+- 结构约束测试（AST）：验证模块无 `pymem` 模块级 import、无模块级可变状态
+- `MPLBACKEND=Agg`：规避本机 Tcl/Tk 损坏导致的 matplotlib 回退（已知环境问题）
 
-```python
-# conftest.py 提供共享 fixtures
-@pytest.fixture
-def sample_df():
-    """5 行模拟战斗数据"""
-    return pd.DataFrame({...})
-
-@pytest.fixture
-def temp_data_dir(tmp_path):
-    """临时数据目录，避免污染真实 data/"""
-    d = tmp_path / "data"
-    d.mkdir(parents=True, exist_ok=True)
-    return str(d)
-```
-
-### 3. 自定义 Markers
-
-```ini
-# pytest.ini
-markers =
-    slow: tests that take a long time (skipped by default)
-    integration: tests that require filesystem or external data
-    smoke: minimal import and structure validation
-```
-
-运行快速测试:
-```bash
-pytest -m "not slow" -v
-```
-
-## 待建设部分 (P3.4)
-
-### 目标文件
-
-| 文件 | 语句数 | 当前覆盖 | 测试方法 |
-|------|--------|----------|----------|
-| `data_cleaner.py` | 56 | 0% | 构造合成 CSV，验证输出列/值 |
-| `data_upgrade.py` | 38 | 0% | 创建旧格式 CSV，验证升级后输出 |
-| `train_lgbm.py` | 52 | 0% | 构造极小合成数据集，验证模型训练 |
-
-### 测试要点
-
-**data_cleaner.py**:
-- 动作映射正确应用（38→37）
-- 姿态状态机正确追踪
-- 派生对提取正确（prev_action→next_action）
-- 小动作/演出排除
-- 边界 case: 空文件、全脏数据、单行数据
-
-**data_upgrade.py**:
-- Phase 回填正确（HP%→1/2/3）
-- Enrage 回溯正确（怒吼+180s）
-- 已升级文件跳过不重复处理
-- 列序正确（timestamp, hp_percent, phase, ...）
-
-**train_lgbm.py**:
-- 罕见招式过滤（<3 次）
-- 类别特征正确编码
-- 模型训练成功（产物 .pkl 存在）
-- early_stopping 生效
-
-## 覆盖率目标
-
-| 模块 | P3.4 前 | P3.4 目标 | P3.5 目标 |
-|------|---------|-----------|-----------|
-| `src/config/actions.py` | 100% | 100% | 100% |
-| `src/config/offsets.py` | 100% | 100% | 100% |
-| `src/logging_config.py` | 100% | 100% | 100% |
-| `ai_engine.py` | 43% | 43% | 43% |
-| `data_cleaner.py` | 0% | ≥ 70% | ≥ 70% |
-| `data_upgrade.py` | 0% | ≥ 70% | ≥ 70% |
-| `train_lgbm.py` | 0% | ≥ 50% | ≥ 50% |
-| **整体** | **29%** | **≥ 58%** | **≥ 60%** |
-
-## 运行测试
+## 6. 运行命令
 
 ```bash
-# 全部测试
-python -m pytest tests/ -v
+# 全量测试
+MPLBACKEND=Agg pytest tests/ -q
 
-# 带覆盖率
-python -m pytest tests/ --cov --cov-report=term
+# 覆盖率
+MPLBACKEND=Agg pytest tests/ -q --cov=src --cov=overlay --cov=launch --cov-report=term
 
-# 快速测试（跳过 slow）
-python -m pytest tests/ -m "not slow" -q
-
-# 指定文件
-python -m pytest tests/test_actions.py -v
+# 单模块
+MPLBACKEND=Agg pytest tests/test_state_tracker.py -q
 ```
 
-## CI 配置
+## 7. 已知环境问题
 
-详见 [[Development/CI_CD|CI/CD]]。
+| 问题 | 影响 | 规避 |
+|------|------|------|
+| 本机 Tcl/Tk `init.tcl` 缺失 | matplotlib 间歇回退 TkAgg → test_train_lgbm 偶发失败 | 始终 `MPLBACKEND=Agg` |
+| DPG/GLFW 无法在 CI 渲染 | 真窗口测试不可能 | 全部 DPG 调用 mock |
 
-每次 push 自动触发:
-- Ubuntu + Windows
-- Python 3.11 + 3.12
-- `pytest --cov` → 覆盖率报告
+## 8. 未来改进
+
+- [ ] E2E 真机手动 checklist（游戏内验证双进程 + 覆盖层）
+- [ ] 进程级集成测试（launch.py 真实 spawn + 存活断言）
+- [ ] 特征消融回归测试（P6）

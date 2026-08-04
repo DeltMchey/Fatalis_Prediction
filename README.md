@@ -3,7 +3,7 @@
 > AI-assisted hunting overlay for **Monster Hunter World** — predicts Fatalis's next attack in real-time.
 
 [![Phase](https://img.shields.io/badge/phase-P5.3%20Dual--Process-blue)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-551%20passed-brightgreen)](#roadmap)
+[![Tests](https://img.shields.io/badge/tests-556%20passed-brightgreen)](#roadmap)
 [![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)](#roadmap)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -104,7 +104,7 @@ BlackDragon/
 ├── models/                 # Trained artifacts (git-ignored)
 ├── archive/                # Deprecated files + legacy closure reports
 ├── obsidian/               # Knowledge base + project documentation
-├── tests/                  # Test suite (26 files, 551 tests, pytest + coverage)
+├── tests/                  # Test suite (26 files, 556 tests, pytest + coverage)
 ├── requirements.txt
 ├── CHANGELOG.md
 └── .gitignore
@@ -170,7 +170,7 @@ This solves the DPG 2.x / GLFW main-thread limitation. See [`obsidian/Architectu
 | P5 | Control Center (Dashboard + Bootstrap + GameService) | ✅ Done |
 | P5.1 | Bootstrap + Game-less Startup | ✅ Done |
 | P5.2 | Overlay Integration Experiment (deferred → ADR-P5.2) | ✅ Done |
-| P5.3 | Dual-Process Overlay Architecture (551 tests, 94% coverage) | ✅ Done |
+| P5.3 | Dual-Process Overlay Architecture (556 tests, 94% coverage) | ✅ Done |
 | P6 | Model Engineering (versioning, incremental learning) | 📋 Future |
 
 See [`obsidian/Development/Development_Roadmap.md`](obsidian/Development/Development_Roadmap.md) for detailed roadmap. Historical roadmap: [`obsidian/docs/legacy/Refactoring_roadmap.md`](obsidian/docs/legacy/Refactoring_roadmap.md).

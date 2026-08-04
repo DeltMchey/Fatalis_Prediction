@@ -371,3 +371,101 @@ class TestDualProcessConstraints:
         """import overlay 不触发 pymem/DearPyGUI 副作用。"""
         import sys
         assert "overlay" in sys.modules  # 已成功 import（无异常）
+
+
+# =============================================================================
+# 7. Windows UTF-8 stdout/stderr 兼容（emoji 输出修复）
+# =============================================================================
+
+class TestUtf8Stdio:
+    def test_ensure_utf8_stdio_reconfigures(self, monkeypatch):
+        """_ensure_utf8_stdio 调用 stdout/stderr reconfigure(encoding='utf-8')。"""
+        import overlay as overlay_module
+        mock_stdout = MagicMock()
+        mock_stderr = MagicMock()
+        monkeypatch.setattr("sys.stdout", mock_stdout)
+        monkeypatch.setattr("sys.stderr", mock_stderr)
+        overlay_module._ensure_utf8_stdio()
+        mock_stdout.reconfigure.assert_called_once_with(
+            encoding="utf-8", errors="replace")
+        mock_stderr.reconfigure.assert_called_once_with(
+            encoding="utf-8", errors="replace")
+
+    def test_ensure_utf8_stdio_fallback_on_exception(self, monkeypatch):
+        """reconfigure 抛异常时不崩溃（静默忽略）。"""
+        import overlay as overlay_module
+        mock_stdout = MagicMock()
+        mock_stdout.reconfigure.side_effect = RuntimeError("no reconfigure")
+        monkeypatch.setattr("sys.stdout", mock_stdout)
+        monkeypatch.setattr("sys.stderr", MagicMock())
+        # 不应抛异常
+        overlay_module._ensure_utf8_stdio()
+
+    def test_ensure_utf8_stdio_no_reconfigure_attr(self, monkeypatch):
+        """stdout 无 reconfigure 属性（极老 Python）→ 不崩溃。"""
+        import overlay as overlay_module
+        class NoReconfigure:
+            pass
+        monkeypatch.setattr("sys.stdout", NoReconfigure())
+        monkeypatch.setattr("sys.stderr", NoReconfigure())
+        overlay_module._ensure_utf8_stdio()  # 不应抛异常
+
+    def test_main_calls_ensure_utf8_stdio_first(self, monkeypatch):
+        """main() 最早调用 _ensure_utf8_stdio（在 AppConfig.load 之前）。"""
+        import overlay as overlay_module
+        order = []
+        monkeypatch.setattr(
+            overlay_module, "_ensure_utf8_stdio",
+            lambda: order.append("utf8"))
+        mock_config = MagicMock()
+        mock_config.auto_record = True
+        monkeypatch.setattr(
+            overlay_module, "AppConfig",
+            MagicMock(load=MagicMock(
+                side_effect=lambda: order.append("config") or mock_config)))
+        monkeypatch.setattr(
+            overlay_module, "_find_game_process",
+            MagicMock(return_value=MagicMock()))
+        monkeypatch.setattr("overlay.pymem.process", MagicMock(
+            module_from_name=MagicMock(
+                return_value=MagicMock(lpBaseOfDll=0x140000000))))
+        monkeypatch.setattr(overlay_module, "MemoryReader", MagicMock())
+        monkeypatch.setattr(overlay_module, "CombatStateTracker", MagicMock())
+        monkeypatch.setattr(overlay_module, "ActionPredictor", MagicMock())
+        monkeypatch.setattr(overlay_module, "CombatRecorder", MagicMock())
+        monkeypatch.setattr(overlay_module, "OverlayUI", MagicMock())
+        overlay_module.main()
+        assert order[0] == "utf8"
+        assert "config" in order
+
+    def test_main_prints_emoji_with_utf8(self, monkeypatch, capsys):
+        """main() 在 UTF-8 reconfigure 后 print emoji 不再抛 UnicodeEncodeError。"""
+        import overlay as overlay_module
+        monkeypatch.setattr(
+            "sys.stdout.reconfigure", MagicMock(encoding="utf-8", errors="replace"),
+            raising=False)
+        monkeypatch.setattr(
+            overlay_module, "_ensure_utf8_stdio",
+            lambda: sys.stdout.reconfigure(encoding="utf-8", errors="replace"))
+        mock_config = MagicMock()
+        mock_config.auto_record = True
+        monkeypatch.setattr(
+            overlay_module, "AppConfig",
+            MagicMock(load=MagicMock(return_value=mock_config)))
+        mock_pm = MagicMock()
+        monkeypatch.setattr(
+            overlay_module, "_find_game_process",
+            MagicMock(return_value=mock_pm))
+        monkeypatch.setattr("overlay.pymem.process", MagicMock(
+            module_from_name=MagicMock(
+                return_value=MagicMock(lpBaseOfDll=0x140000000))))
+        monkeypatch.setattr(overlay_module, "MemoryReader", MagicMock())
+        monkeypatch.setattr(overlay_module, "CombatStateTracker", MagicMock())
+        pred = MagicMock()
+        pred.is_loaded = True
+        monkeypatch.setattr(overlay_module, "ActionPredictor",
+                            MagicMock(return_value=pred))
+        monkeypatch.setattr(overlay_module, "CombatRecorder", MagicMock())
+        monkeypatch.setattr(overlay_module, "OverlayUI", MagicMock())
+        # main() 内 print("✅ ...") 不应抛 UnicodeEncodeError
+        overlay_module.main()

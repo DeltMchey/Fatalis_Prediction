@@ -1,4 +1,4 @@
-# BlackDragon (黑龙)
+# Fatalis Prediction (黑龙招式预测)
 
 > AI-assisted hunting overlay for **Monster Hunter World** — predicts Fatalis's next attack in real-time.
 

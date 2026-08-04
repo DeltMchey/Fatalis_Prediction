@@ -223,6 +223,60 @@ class TestTraining:
         # 队列已排空
         assert deps["controller"].get_training_output() == []
 
+    def test_start_training_frozen_uses_train_flag(self, deps, monkeypatch):
+        """冻结模式: start_training 应使用 [exe, --train] 而非 [exe, train_lgbm.py]。
+
+        防止 BlackDragon.exe train_lgbm.py 重新启动 Dashboard。
+        """
+        import subprocess
+        import sys
+        proc = MagicMock()
+        proc.poll.return_value = None
+        proc.stdout = ["line1\n"]
+        monkeypatch.setattr(subprocess, "Popen", MagicMock(return_value=proc))
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "executable", r"C:\dist\BlackDragon.exe")
+
+        ok = deps["controller"].start_training()
+        assert ok is True
+        cmd = subprocess.Popen.call_args[0][0]
+        assert cmd == [r"C:\dist\BlackDragon.exe", "--train"]
+
+
+# =============================================================================
+# 4b. Frozen 模式路径（PyInstaller）
+# =============================================================================
+
+class TestFrozenPaths:
+    def test_data_dir_frozen_resolves_to_exe_dir(self, monkeypatch):
+        """sys.frozen=True → data_dir 返回 <exe_dir>/data。"""
+        import sys
+        from pathlib import Path
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "executable", r"C:\dist\BlackDragon\BlackDragon.exe")
+        ctrl = AppController(AppConfig())
+        assert ctrl.data_dir == Path(r"C:\dist\BlackDragon\data")
+
+    def test_data_dir_dev_uses_config_value(self):
+        """开发模式（无 sys.frozen）→ data_dir 返回相对 Path("data")。"""
+        from pathlib import Path
+        ctrl = AppController(AppConfig())
+        assert ctrl.data_dir == Path("data")
+
+    def test_start_training_frozen_flag(self, deps, monkeypatch):
+        """冻结模式 start_training 传 [exe, --train]（覆盖层冻结分支）。"""
+        import subprocess
+        import sys
+        proc = MagicMock()
+        proc.poll.return_value = None
+        proc.stdout = []
+        monkeypatch.setattr(subprocess, "Popen", MagicMock(return_value=proc))
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "executable", r"C:\dist\BlackDragon.exe")
+        deps["controller"].start_training()
+        cmd = subprocess.Popen.call_args[0][0]
+        assert cmd == [r"C:\dist\BlackDragon.exe", "--train"]
+
 
 # =============================================================================
 # 5. Shutdown
@@ -285,11 +339,12 @@ class TestLightweightConstructor:
         assert ctrl._overlay_proc is None
 
     def test_data_dir_property(self):
-        """S1: data_dir 通过公共属性暴露。"""
+        """S1: data_dir 通过公共属性暴露（返回 Path，保留 config 自定义）。"""
+        from pathlib import Path
         cfg = AppConfig()
         cfg.data_dir = "custom_data"
         ctrl = AppController(cfg)
-        assert ctrl.data_dir == "custom_data"
+        assert ctrl.data_dir == Path("custom_data")
 
 
 class TestAttachGame:

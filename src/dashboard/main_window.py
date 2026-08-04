@@ -94,7 +94,8 @@ class Dashboard:
                     default_value=self._controller.is_recording,
                     callback=self._on_recording_toggle)
             dpg.add_spacer(height=8)
-            self._widgets["csv_list"] = dpg.add_text("CSV 文件:", wrap=0)
+            self._widgets["csv_list"] = dpg.add_text("战斗记录: 加载中...", wrap=0)
+            self._widgets["training_data"] = dpg.add_text("训练数据: 检查中...", wrap=0)
 
     # ================= 每帧刷新 =================
 
@@ -132,24 +133,51 @@ class Dashboard:
         )
 
     def _refresh_csv_list(self) -> None:
-        """刷新 CSV 文件列表（每 2 秒——用帧计数节流）。"""
+        """刷新战斗记录 + 训练数据状态（每 2 秒——用帧计数节流）。
+
+        - 战斗记录: 只匹配 fatalis_combat_data_*.csv（CombatRecorder 录制产物）
+        - 训练数据: 检查 data/ML_Ready_Dataset.csv 是否存在
+        使用 controller.data_dir（冻结模式下解析为 <exe_dir>/data）而非
+        cwd-relative 路径，确保 Dashboard 和 Recorder 读取同一目录。
+        """
         if not hasattr(self, "_csv_tick"):
             self._csv_tick = 0
         self._csv_tick += 1
         if self._csv_tick % 60 != 0:
             return
-        data_dir = Path(self._controller.data_dir)
-        if not data_dir.is_dir():
-            dpg.set_value(self._widgets["csv_list"], "CSV 文件: (无法读取)")
-            return
+        data_dir = self._controller.data_dir  # controller.data_dir 已返回 Path
+
+        # ── 战斗记录状态 ──
         try:
-            files = sorted(data_dir.glob("fatalis_combat_data_*.csv"))
-            lines = [f"CSV 文件: {len(files)} 个"]
-            for f in files[-8:]:
-                lines.append(f"  - {f.name} ({f.stat().st_size // 1024} KB)")
-            dpg.set_value(self._widgets["csv_list"], "\n".join(lines))
+            if not data_dir.is_dir():
+                dpg.set_value(self._widgets["csv_list"],
+                              "战斗记录: 0 个（目录不存在）")
+            else:
+                files = sorted(data_dir.glob("fatalis_combat_data_*.csv"))
+                if not files:
+                    dpg.set_value(
+                        self._widgets["csv_list"],
+                        "战斗记录: 暂无战斗记录（开始游戏录制后自动生成）")
+                else:
+                    lines = [f"战斗记录: {len(files)} 个"]
+                    for f in files[-8:]:
+                        lines.append(
+                            f"  - {f.name} ({f.stat().st_size // 1024} KB)")
+                    dpg.set_value(self._widgets["csv_list"], "\n".join(lines))
         except Exception:
-            dpg.set_value(self._widgets["csv_list"], "CSV 文件: (无法读取)")
+            dpg.set_value(self._widgets["csv_list"], "战斗记录: (无法读取)")
+
+        # ── 训练数据状态 ──
+        try:
+            dataset = data_dir / "ML_Ready_Dataset.csv"
+            if dataset.is_file():
+                dpg.set_value(self._widgets["training_data"],
+                              "训练数据: ML_Ready_Dataset.csv ✓")
+            else:
+                dpg.set_value(self._widgets["training_data"],
+                              "训练数据: 未找到")
+        except Exception:
+            dpg.set_value(self._widgets["training_data"], "训练数据: (无法读取)")
 
     # ================= 回调 =================
 

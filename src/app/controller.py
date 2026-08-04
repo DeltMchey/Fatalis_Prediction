@@ -19,11 +19,13 @@ P5.3 双进程架构（ADR-P5.2）：
 """
 
 import logging
+import os
 import queue
 import subprocess
 import sys
 import threading
 from collections import deque
+from pathlib import Path
 
 from src.app.config import AppConfig
 
@@ -103,7 +105,8 @@ class AppController:
             lock = threading.Lock()
             created["buffer"] = buffer
             created["lock"] = lock
-            recorder = CombatRecorder(reader, state, buffer, lock)
+            recorder = CombatRecorder(reader, state, buffer, lock,
+                                      data_dir=str(self.data_dir))
             created["recorder"] = recorder
         except Exception:
             logger.error("attach_game 初始化失败", exc_info=True)
@@ -190,9 +193,18 @@ class AppController:
         return self._training_proc is not None and self._training_proc.poll() is None
 
     @property
-    def data_dir(self) -> str:
-        """录制 CSV 输出目录（Dashboard 显示文件列表用）。"""
-        return self._config.data_dir
+    def data_dir(self) -> "Path":
+        """录制 CSV 输出目录（Dashboard 显示文件列表用）。
+
+        冻结模式（PyInstaller）下解析为 <exe_dir>/<data_dir>，避免 CWD 不确定：
+          开发模式: python launch.py      → Path(config.data_dir)（相对项目根）
+          冻结模式: BlackDragon.exe       → Path(sys.executable).parent / data_dir
+        保留 config.data_dir 自定义能力（绝对路径直接使用，相对路径在冻结模式基于 exe 目录）。
+        """
+        path = self._config.data_dir
+        if getattr(sys, "frozen", False) and not os.path.isabs(path):
+            return Path(sys.executable).parent / path
+        return Path(path)
 
     # ================= 命令（Dashboard 按钮绑定）=================
 
@@ -209,7 +221,12 @@ class AppController:
             self._state.is_recording = bool(enabled)
 
     def start_overlay(self) -> bool:
-        """启动覆盖层子进程（`python overlay.py`）。
+        """启动覆盖层子进程。
+
+        运行模式（PyInstaller 打包支持）：
+          - 开发模式:  [sys.executable, "overlay.py"]
+          - 冻结模式:  [<exe_dir>/BlackDragonOverlay.exe]（与 BlackDragon.exe 同目录）
+        由 getattr(sys, "frozen", False) 检测当前运行环境。
 
         P5.3：Overlay 是独立进程——每个进程自己的 DPG context + 主线程，
         规避 DPG 2.x / GLFW 的 main-thread 限制（ADR-P5.2）。
@@ -221,8 +238,16 @@ class AppController:
             logger.info("覆盖层子进程已在运行")
             return False
         try:
+            if getattr(sys, "frozen", False):
+                # 冻结模式：spawn 与当前 exe 同目录的 BlackDragonOverlay.exe
+                exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+                overlay_exe = os.path.join(exe_dir, "BlackDragonOverlay.exe")
+                cmd = [overlay_exe]
+            else:
+                # 开发模式：python overlay.py
+                cmd = [sys.executable, self._config.overlay_script]
             self._overlay_proc = subprocess.Popen(
-                [sys.executable, self._config.overlay_script],
+                cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
@@ -245,20 +270,35 @@ class AppController:
             return False
 
     def start_training(self) -> bool:
-        """启动训练子进程（train_lgbm.py）。
+        """启动训练子进程。
+
+        运行模式（PyInstaller 打包支持）：
+          - 开发模式:  [sys.executable, "train_lgbm.py"]
+          - 冻结模式:  [sys.executable, "--train"]（同一 exe 的训练模式）
+        由 getattr(sys, "frozen", False) 检测当前运行环境。
 
         返回是否成功启动（已在训练时返回 False）。
         """
         if self.is_training:
             return False
         try:
+            if getattr(sys, "frozen", False):
+                # 冻结模式：spawn 同 exe 的 --train 训练模式
+                cmd = [sys.executable, "--train"]
+                # 训练脚本始终在 exe 所在目录运行（不依赖 CWD —— 兼容双击/快捷方式/其他目录启动）
+                popen_kwargs = {"cwd": os.path.dirname(sys.executable)}
+            else:
+                # 开发模式：python train_lgbm.py
+                cmd = [sys.executable, self._config.training_script]
+                popen_kwargs = {}
             self._training_proc = subprocess.Popen(
-                [sys.executable, self._config.training_script],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                **popen_kwargs,
             )
         except Exception:
             logger.error("启动训练失败", exc_info=True)

@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import joblib
+import os
 from src.logging_config import setup_logging
 
 logger = setup_logging()
@@ -67,6 +68,8 @@ def train_fatalis_ai():
     top3_accuracy = np.mean([y_test_array[i] in model.classes_[top3_indices[i]] for i in range(len(y_test_array))])
     print(f"🌟 实战黄金指标：Top-3 命中率: {top3_accuracy * 100:.2f}%")
 
+    # 保存前确保 models/ 目录存在（开发模式 CWD 为项目根，冻结模式 cwd 为 exe 目录）
+    os.makedirs("models", exist_ok=True)
     joblib.dump(model, "models/fatalis_ai_model.pkl")
     print(f"💾 模型已保存至: models/fatalis_ai_model.pkl")
 

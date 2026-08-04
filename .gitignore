@@ -20,6 +20,12 @@ data/*.csv
 models/*.pkl
 models/*.png
 
+# PyInstaller build artifacts (keep *.spec files, ignore generated dirs)
+build/BlackDragon/
+build/BlackDragonOverlay/
+dist/
+*.spec.bak
+
 # Logs
 *.log
 

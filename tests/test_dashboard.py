@@ -106,6 +106,7 @@ class TestBuildUI:
         assert "overlay_btn" in dash._widgets
         assert "record_chk" in dash._widgets
         assert "csv_list" in dash._widgets
+        assert "training_data" in dash._widgets
 
 
 # =============================================================================
@@ -340,20 +341,84 @@ class TestWindowFlags:
 # =============================================================================
 
 class TestRefreshCsvList:
-    def test_refresh_csv_list_lists_files(self, mock_controller, mock_dpg_all, tmp_path):
+    def test_refresh_combat_records_lists_files(self, mock_controller, mock_dpg_all, tmp_path):
+        from pathlib import Path
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         (data_dir / "fatalis_combat_data_20260101_000000.csv").write_text("x")
         (data_dir / "fatalis_combat_data_20260101_000001.csv").write_text("y")
-        mock_controller.data_dir = str(data_dir)
+        mock_controller.data_dir = data_dir  # controller.data_dir 返回 Path
         dash = Dashboard(mock_controller)
         dash._widgets["csv_list"] = "csv_widget"
+        dash._widgets["training_data"] = "train_widget"
         dash._csv_tick = 59  # 下一次 refresh 触发（% 60 == 0）
         dash._refresh_csv_list()
-        # 列表文本包含 2 个文件
-        call = mock_dpg_all.set_value.call_args
-        assert call[0][0] == "csv_widget"
-        assert "2 个" in call[0][1]
+        # 战斗记录文本包含 2 个文件
+        calls = mock_dpg_all.set_value.call_args_list
+        combat_call = [c for c in calls if c[0][0] == "csv_widget"][0]
+        assert "战斗记录: 2 个" in combat_call[0][1]
+        assert "fatalis_combat_data_20260101_000000.csv" in combat_call[0][1]
+
+    def test_refresh_combat_records_empty_shows_hint(self, mock_controller, mock_dpg_all, tmp_path):
+        """无战斗记录 → 显示引导提示（而非 0 个）。"""
+        from pathlib import Path
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        mock_controller.data_dir = data_dir
+        dash = Dashboard(mock_controller)
+        dash._widgets["csv_list"] = "csv_widget"
+        dash._widgets["training_data"] = "train_widget"
+        dash._csv_tick = 59
+        dash._refresh_csv_list()
+        calls = mock_dpg_all.set_value.call_args_list
+        combat_call = [c for c in calls if c[0][0] == "csv_widget"][0]
+        assert "暂无战斗记录" in combat_call[0][1]
+        assert "开始游戏录制后自动生成" in combat_call[0][1]
+
+    def test_refresh_combat_records_missing_dir(self, mock_controller, mock_dpg_all, tmp_path):
+        """data_dir 不存在 → 显示目录不存在。"""
+        from pathlib import Path
+        mock_controller.data_dir = Path(tmp_path / "nonexistent")
+        dash = Dashboard(mock_controller)
+        dash._widgets["csv_list"] = "csv_widget"
+        dash._widgets["training_data"] = "train_widget"
+        dash._csv_tick = 59
+        dash._refresh_csv_list()
+        calls = mock_dpg_all.set_value.call_args_list
+        combat_call = [c for c in calls if c[0][0] == "csv_widget"][0]
+        assert "战斗记录" in combat_call[0][1]
+        assert "目录不存在" in combat_call[0][1]
+
+    def test_refresh_training_data_present(self, mock_controller, mock_dpg_all, tmp_path):
+        """训练数据集存在 → 显示 ✓。"""
+        from pathlib import Path
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "ML_Ready_Dataset.csv").write_text("distance,relative_angle")
+        mock_controller.data_dir = data_dir
+        dash = Dashboard(mock_controller)
+        dash._widgets["csv_list"] = "csv_widget"
+        dash._widgets["training_data"] = "train_widget"
+        dash._csv_tick = 59
+        dash._refresh_csv_list()
+        calls = mock_dpg_all.set_value.call_args_list
+        train_call = [c for c in calls if c[0][0] == "train_widget"][0]
+        assert "训练数据: ML_Ready_Dataset.csv ✓" in train_call[0][1]
+
+    def test_refresh_training_data_missing(self, mock_controller, mock_dpg_all, tmp_path):
+        """训练数据集缺失 → 显示未找到。"""
+        from pathlib import Path
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        mock_controller.data_dir = data_dir
+        dash = Dashboard(mock_controller)
+        dash._widgets["csv_list"] = "csv_widget"
+        dash._widgets["training_data"] = "train_widget"
+        dash._csv_tick = 59
+        dash._refresh_csv_list()
+        calls = mock_dpg_all.set_value.call_args_list
+        train_call = [c for c in calls if c[0][0] == "train_widget"][0]
+        assert "训练数据: 未找到" in train_call[0][1]
 
     def test_refresh_csv_list_throttled(self, mock_controller, mock_dpg_all):
         """帧计数节流：非 60 的倍数不刷新。"""
@@ -362,13 +427,3 @@ class TestRefreshCsvList:
         dash._csv_tick = 1
         dash._refresh_csv_list()
         mock_dpg_all.set_value.assert_not_called()
-
-    def test_refresh_csv_list_missing_dir(self, mock_controller, mock_dpg_all, tmp_path):
-        """data_dir 不存在 → 显示无法读取。"""
-        mock_controller.data_dir = str(tmp_path / "nonexistent")
-        dash = Dashboard(mock_controller)
-        dash._widgets["csv_list"] = "csv_widget"
-        dash._csv_tick = 59  # 下一次 refresh 触发
-        dash._refresh_csv_list()
-        call = mock_dpg_all.set_value.call_args
-        assert "无法读取" in call[0][1]

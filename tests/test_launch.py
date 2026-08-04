@@ -130,3 +130,41 @@ class TestAutoStartBehavior:
         controller = self._patch_deps(monkeypatch, auto_start_overlay=False)
         launch.main()
         controller.shutdown.assert_called_once()  # 走到 finally 清理
+
+
+# =============================================================================
+# Frozen 模式: --train 训练入口
+# =============================================================================
+
+class TestTrainMode:
+    def test_main_handles_train_flag(self, monkeypatch):
+        """--train flag → 调用 train_fatalis_ai()，不启动 Dashboard。"""
+        import sys
+        mock_train = MagicMock()
+        monkeypatch.setattr("train_lgbm.train_fatalis_ai", mock_train)
+        old_argv = sys.argv
+        try:
+            sys.argv = ["BlackDragon.exe", "--train"]
+            launch.main()
+        finally:
+            sys.argv = old_argv
+        mock_train.assert_called_once()
+
+    def test_train_flag_removed_from_argv(self, monkeypatch):
+        """--train 应从 sys.argv 中移除。"""
+        import sys
+        monkeypatch.setattr("train_lgbm.train_fatalis_ai", MagicMock())
+        old_argv = sys.argv
+        try:
+            sys.argv = ["BlackDragon.exe", "--train", "extra"]
+            launch.main()
+            assert "--train" not in sys.argv
+        finally:
+            sys.argv = old_argv
+
+    def test_main_has_train_flag_detection(self):
+        """main() 应包含 --train 检测逻辑。"""
+        import inspect
+        src = inspect.getsource(launch.main)
+        assert '"--train" in sys.argv' in src
+        assert "train_fatalis_ai" in src

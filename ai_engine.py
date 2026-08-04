@@ -1,3 +1,7 @@
+# LEGACY
+# Superseded by src/ architecture (P4–P5.3 modular extraction + dual-process).
+# Preserved for: P3 test backward compatibility + reference fallback.
+# Recommended: use `python launch.py` or `python overlay.py`.
 import pymem
 import pymem.process
 import time

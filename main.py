@@ -1,3 +1,6 @@
+# LEGACY ENTRY POINT
+# P4 single-process architecture — superseded by launch.py (P5.3 dual-process)
+# Recommended: use `python launch.py` for Dashboard + Overlay dual-process startup
 """P4 Step 6: BlackDragon — application composition root.
 
 使用 P4 提取的模块组装应用。ai_engine.py 保留作为 legacy reference

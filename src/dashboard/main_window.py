@@ -1,12 +1,13 @@
 """P5: Dashboard — 用户控制中心主窗口。
 
 DPG primary viewport 承载：
-  - 控制台 Tab: Overlay 启停、录制开关、CSV 文件列表
+  - 控制台 Tab: 覆盖层子进程启停、录制开关、CSV 文件列表
   - 训练 Tab: TrainingPanel
   - 日志 Tab: LogView
   - 底部状态栏: StatusBar
 
-线程模型（与 P4 一致）:
+P5.3 双进程架构（ADR-P5.2）:
+  - Overlay 是独立子进程（overlay.py）—— Dashboard 只负责启动/终止子进程
   - Dashboard.run() 阻塞运行在 main 线程（DPG event loop）
   - CombatRecorder daemon 线程（由 main/launch 启动）
   - 训练子进程（AppController 管理）
@@ -42,9 +43,8 @@ class Dashboard:
         """创建 DPG context + 主窗口 + viewport，进入 event loop。
 
         每帧:
-          1. overlay.update_logic()（若覆盖层已启动）
-          2. 状态栏刷新
-          3. 日志/训练输出轮询
+          1. 状态栏刷新
+          2. 日志/训练输出轮询
         """
         dpg.create_context()
         from src.ui.fonts import setup_cjk_font
@@ -81,7 +81,10 @@ class Dashboard:
             self._status_bar.build()
 
     def _build_console_tab(self) -> None:
-        """控制台 Tab: Overlay 启停 + 录制开关 + CSV 列表。"""
+        """控制台 Tab: 覆盖层子进程启停 + 录制开关 + CSV 列表。
+
+        P5.3: Overlay 按钮启动/终止 `overlay.py` 子进程（独立进程）。
+        """
         with dpg.group():
             with dpg.group(horizontal=True):
                 self._widgets["overlay_btn"] = dpg.add_button(
@@ -98,7 +101,7 @@ class Dashboard:
     def _on_frame(self) -> None:
         """每帧刷新：状态栏 + 日志 + CSV 列表 + 按钮状态。
 
-        Overlay 在独立线程自驱动——Dashboard 不驱动其 update_logic()。
+        Overlay 是独立子进程自驱动——Dashboard 不驱动其 update_logic()。
         """
         self._refresh_status()
         self._log_view.refresh()
@@ -125,7 +128,7 @@ class Dashboard:
             game=self._controller.is_game_connected,
             model=self._controller.is_model_loaded,
             recording=self._controller.is_recording,
-            overlay=self._controller.is_overlay_visible,
+            overlay=self._controller.is_overlay_running,
         )
 
     def _refresh_csv_list(self) -> None:
@@ -151,8 +154,8 @@ class Dashboard:
     # ================= 回调 =================
 
     def _on_overlay_toggle(self, sender=None, app_data=None) -> None:
-        """Overlay 启停按钮回调（toggle）。"""
-        if self._controller.is_overlay_visible:
+        """覆盖层子进程启停按钮回调（P5.3：启动/终止 overlay.py）。"""
+        if self._controller.is_overlay_running:
             self._controller.stop_overlay()
             dpg.configure_item(self._widgets["overlay_btn"], label="启动覆盖层")
         else:

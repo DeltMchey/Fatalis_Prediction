@@ -4,7 +4,7 @@
   - 游戏连接状态 (🟢/🔴)
   - 模型加载状态 (🟢/🔴)
   - 录制状态 (🟢/🟡/⬛)
-  - 覆盖层状态 (🟢/⬛)
+  - 覆盖层子进程状态 (🟢/⬛)  — P5.3: 独立进程运行状态
 """
 
 from dearpygui import dearpygui as dpg
@@ -19,8 +19,8 @@ class StatusBar:
     _MODEL_OFF = "模型: 🔴 未加载"
     _REC_ON = "录制: 🟢 进行中"
     _REC_OFF = "录制: ⬛ 停止"
-    _OVL_ON = "覆盖层: 🟢 显示"
-    _OVL_OFF = "覆盖层: ⬛ 隐藏"
+    _OVL_ON = "覆盖层: 🟢 运行中"
+    _OVL_OFF = "覆盖层: ⬛ 未启动"
 
     def __init__(self):
         self._game_text = None

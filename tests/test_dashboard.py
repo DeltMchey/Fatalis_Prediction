@@ -45,10 +45,9 @@ def mock_controller():
     ctrl.is_game_connected = True
     ctrl.is_model_loaded = True
     ctrl.is_recording = True
-    ctrl.is_overlay_visible = False
+    ctrl.is_overlay_running = False
     ctrl.is_training = False
     ctrl.get_training_output.return_value = []
-    ctrl._overlay = MagicMock()
     ctrl.data_dir = "data"
     ctrl._config = MagicMock()
     ctrl._config.data_dir = "data"
@@ -115,7 +114,9 @@ class TestBuildUI:
 
 class TestConsoleCallbacks:
     def test_overlay_toggle_start(self, mock_controller, mock_dpg_all):
-        mock_controller.is_overlay_visible = False
+        """P5.3: 覆盖层未运行 → start_overlay 启动子进程。"""
+        mock_controller.is_overlay_running = False
+        mock_controller.start_overlay.return_value = True
         dash = Dashboard(mock_controller)
         dash._build_ui()
         dash._on_overlay_toggle()
@@ -123,7 +124,8 @@ class TestConsoleCallbacks:
         mock_controller.stop_overlay.assert_not_called()
 
     def test_overlay_toggle_stop(self, mock_controller, mock_dpg_all):
-        mock_controller.is_overlay_visible = True
+        """P5.3: 覆盖层运行中 → stop_overlay 终止子进程。"""
+        mock_controller.is_overlay_running = True
         dash = Dashboard(mock_controller)
         dash._build_ui()
         dash._on_overlay_toggle()
@@ -260,7 +262,7 @@ class TestOnFrame:
     def test_on_frame_refreshes_dashboard_only(self, mock_controller):
         """_on_frame 刷新状态栏/日志/训练/CSV/按钮——不驱动 overlay。
 
-        P5.2: Overlay 在独立线程自驱动——Dashboard 不调用其 update_logic()。
+        P5.3: Overlay 是独立子进程自驱动——Dashboard 不调用其 update_logic()。
         """
         with patch("src.dashboard.main_window.dpg"):
             dash = Dashboard(mock_controller)

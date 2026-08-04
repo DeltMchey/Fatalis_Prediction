@@ -1,13 +1,14 @@
-"""P5: AppController tests — 生命周期协调器。
+"""P5 + P5.3: AppController tests — 生命周期协调器。
 
 策略：
-  - mock StateTracker / Recorder / Predictor / MemoryReader / Overlay
-  - 验证状态查询、录制开关、overlay 启停、训练子进程、shutdown
+  - mock StateTracker / Recorder / Predictor / MemoryReader
+  - Overlay 是**独立子进程**（P5.3 双进程）——用 subprocess.Popen mock 验证
+  - 验证状态查询、录制开关、覆盖层子进程启停、训练子进程、shutdown
 
 覆盖：
   - 状态查询（game/recording/model/overlay/training）
   - 录制控制（toggle/set）
-  - Overlay 启停（含未注入降级）
+  - 覆盖层子进程启停（start/stop/is_overlay_running）
   - 训练启动/取消/输出队列
   - shutdown 优雅退出
 """
@@ -34,7 +35,6 @@ def deps():
     predictor.is_loaded = True
     reader = MagicMock()
     reader.check_zone.return_value = 417
-    overlay = MagicMock()
     config = AppConfig()
     controller = AppController(config)
     # 模拟 attach_game 后的状态
@@ -42,11 +42,10 @@ def deps():
     controller._recorder = recorder
     controller._predictor = predictor
     controller._reader = reader
-    controller._overlay = overlay
     controller._game_attached = True
     return {
         "state": state, "recorder": recorder, "predictor": predictor,
-        "reader": reader, "overlay": overlay, "config": config,
+        "reader": reader, "config": config,
         "controller": controller,
     }
 
@@ -78,8 +77,9 @@ class TestStatus:
         deps["predictor"].is_loaded = False
         assert deps["controller"].is_model_loaded is False
 
-    def test_overlay_initial_hidden(self, deps):
-        assert deps["controller"].is_overlay_visible is False
+    def test_overlay_initial_not_running(self, deps):
+        """P5.3: 无子进程 → is_overlay_running False。"""
+        assert deps["controller"].is_overlay_running is False
 
     def test_training_initial_false(self, deps):
         assert deps["controller"].is_training is False
@@ -110,32 +110,70 @@ class TestRecordingControl:
 
 
 # =============================================================================
-# 3. Overlay 启停
+# 3. 覆盖层子进程（P5.3 双进程）
 # =============================================================================
 
-class TestOverlayControl:
-    def test_start_overlay(self, deps):
-        """start_overlay 投递 show 命令（overlay 线程执行 DPG 调用）。"""
-        deps["controller"]._overlay_visible = False
+class TestOverlaySubprocess:
+    def test_start_overlay_launches_subprocess(self, deps, monkeypatch):
+        """start_overlay 启动 `python overlay.py` 子进程。"""
+        import subprocess
+        import sys
+        proc = MagicMock()
+        proc.poll.return_value = None  # 运行中
+        monkeypatch.setattr(subprocess, "Popen", MagicMock(return_value=proc))
         ok = deps["controller"].start_overlay()
         assert ok is True
-        deps["overlay"].show.assert_called_once()
-        assert deps["controller"].is_overlay_visible is True
+        args = subprocess.Popen.call_args[0][0]  # [sys.executable, "overlay.py"]
+        assert args[0] == sys.executable
+        assert args[1] == "overlay.py"
+        assert deps["controller"].is_overlay_running is True
 
-    def test_stop_overlay(self, deps):
-        deps["controller"]._overlay_visible = True
-        ok = deps["controller"].stop_overlay()
-        assert ok is True
-        deps["overlay"].hide.assert_called_once()
-        assert deps["controller"].is_overlay_visible is False
+    def test_start_overlay_custom_script(self, deps, monkeypatch):
+        """overlay_script 来自 config（可配置）。"""
+        import subprocess
+        deps["config"].overlay_script = "custom_overlay.py"
+        proc = MagicMock()
+        proc.poll.return_value = None
+        monkeypatch.setattr(subprocess, "Popen", MagicMock(return_value=proc))
+        deps["controller"].start_overlay()
+        args = subprocess.Popen.call_args[0][0]
+        assert args[1] == "custom_overlay.py"
 
-    def test_start_overlay_without_injection(self, deps):
-        deps["controller"]._overlay = None
+    def test_start_overlay_already_running(self, deps, monkeypatch):
+        """已在运行 → 返回 False，不重复启动。"""
+        import subprocess
+        proc = MagicMock()
+        proc.poll.return_value = None
+        deps["controller"]._overlay_proc = proc
+        monkeypatch.setattr(subprocess, "Popen", MagicMock())
         ok = deps["controller"].start_overlay()
         assert ok is False
+        subprocess.Popen.assert_not_called()
 
-    def test_stop_overlay_without_injection(self, deps):
-        deps["controller"]._overlay = None
+    def test_start_overlay_popen_failure(self, deps, monkeypatch):
+        """Popen 抛异常 → 返回 False，_overlay_proc 置回 None。"""
+        import subprocess
+        monkeypatch.setattr(
+            subprocess, "Popen", MagicMock(side_effect=RuntimeError("no python")))
+        ok = deps["controller"].start_overlay()
+        assert ok is False
+        assert deps["controller"].is_overlay_running is False
+
+    def test_stop_overlay_terminates(self, deps):
+        proc = MagicMock()
+        proc.poll.return_value = None  # 运行中
+        deps["controller"]._overlay_proc = proc
+        ok = deps["controller"].stop_overlay()
+        assert ok is True
+        proc.terminate.assert_called_once()
+
+    def test_stop_overlay_none(self, deps):
+        assert deps["controller"].stop_overlay() is False
+
+    def test_stop_overlay_already_exited(self, deps):
+        proc = MagicMock()
+        proc.poll.return_value = 0  # 已退出
+        deps["controller"]._overlay_proc = proc
         assert deps["controller"].stop_overlay() is False
 
 
@@ -195,9 +233,13 @@ class TestShutdown:
         deps["controller"].shutdown()
         deps["recorder"].stop.assert_called_once()
 
-    def test_shutdown_stops_overlay(self, deps):
+    def test_shutdown_terminates_overlay_proc(self, deps):
+        """shutdown 终止覆盖层子进程。"""
+        proc = MagicMock()
+        proc.poll.return_value = None  # 运行中
+        deps["controller"]._overlay_proc = proc
         deps["controller"].shutdown()
-        deps["overlay"].stop.assert_called_once()
+        proc.terminate.assert_called_once()
 
     def test_shutdown_idempotent(self, deps):
         deps["controller"].shutdown()
@@ -209,7 +251,7 @@ class TestShutdown:
         deps["controller"].shutdown()  # 不应抛异常
 
     def test_shutdown_without_overlay(self, deps):
-        deps["controller"]._overlay = None
+        deps["controller"]._overlay_proc = None
         deps["controller"].shutdown()  # 不应抛异常
 
 
@@ -225,20 +267,22 @@ class TestLightweightConstructor:
         assert ctrl._recorder is None
         assert ctrl._predictor is None
         assert ctrl._reader is None
-        assert ctrl._overlay is None
+        assert ctrl._overlay_proc is None
         assert ctrl.is_game_attached is False
         assert ctrl.is_game_connected is False
         assert ctrl.is_recording is False
         assert ctrl.is_model_loaded is False
+        assert ctrl.is_overlay_running is False
 
     def test_recording_toggle_without_attach_returns_false(self):
         ctrl = AppController(AppConfig())
         assert ctrl.toggle_recording() is False
         ctrl.set_recording(True)  # 不应抛异常
 
-    def test_start_overlay_without_attach_returns_false(self):
+    def test_start_overlay_without_config(self):
+        """未附着游戏也能启动覆盖层子进程（独立进程）。"""
         ctrl = AppController(AppConfig())
-        assert ctrl.start_overlay() is False
+        assert ctrl._overlay_proc is None
 
     def test_data_dir_property(self):
         """S1: data_dir 通过公共属性暴露。"""
@@ -250,13 +294,12 @@ class TestLightweightConstructor:
 
 class TestAttachGame:
     def test_attach_game_creates_modules(self, monkeypatch):
-        """attach_game 创建全部 P4 模块并启动 recorder。"""
+        """attach_game 创建 P4 数据模块并启动 recorder（不创建 OverlayUI）。"""
         ctrl = AppController(AppConfig())
         mock_mr = MagicMock()
         mock_st = MagicMock()
         mock_pred = MagicMock()
         mock_rec = MagicMock()
-        mock_ov = MagicMock()
 
         # attach_game 内部惰性 import P4 模块 —— 用 monkeypatch.setitem
         # 临时替换 sys.modules（测试后自动恢复，不污染其他测试）
@@ -267,7 +310,6 @@ class TestAttachGame:
             "src.core.state_tracker": ("CombatStateTracker", mock_st),
             "src.model.predictor": ("ActionPredictor", mock_pred),
             "src.data.recorder": ("CombatRecorder", mock_rec),
-            "src.ui.overlay": ("OverlayUI", mock_ov),
         }
         for mod_name, (cls_name, instance) in mock_classes.items():
             m = types.ModuleType(mod_name)
@@ -281,10 +323,100 @@ class TestAttachGame:
         assert ctrl._state is mock_st
         assert ctrl._predictor is mock_pred
         assert ctrl._recorder is mock_rec
-        assert ctrl._overlay is mock_ov
         mock_rec.start.assert_called_once()
-        mock_ov.start.assert_called_once()  # 自动启动覆盖层线程
-        assert ctrl._overlay_visible is True
+        # P5.3: attach_game 不再创建/启动 OverlayUI
+        assert ctrl._overlay_proc is None
+
+    def test_attach_game_uses_config_auto_record_true(self, monkeypatch):
+        """ADR-P5.3: 默认 auto_record=True → CombatStateTracker(is_recording=True)。"""
+        import sys
+        import types
+        ctrl = AppController(AppConfig())
+        mock_mr = MagicMock()
+        mock_st = MagicMock()
+        mock_pred = MagicMock()
+        mock_rec = MagicMock()
+        mock_classes = {
+            "src.core.memory_reader": ("MemoryReader", mock_mr),
+            "src.core.state_tracker": ("CombatStateTracker", mock_st),
+            "src.model.predictor": ("ActionPredictor", mock_pred),
+            "src.data.recorder": ("CombatRecorder", mock_rec),
+        }
+        captured = {}
+        for mod_name, (cls_name, instance) in mock_classes.items():
+            m = types.ModuleType(mod_name)
+            cls = MagicMock(return_value=instance)
+            if cls_name == "CombatStateTracker":
+                captured["CombatStateTracker"] = cls
+            setattr(m, cls_name, cls)
+            monkeypatch.setitem(sys.modules, mod_name, m)
+
+        ok = ctrl.attach_game(MagicMock(), 0x140000000)
+        assert ok is True
+        assert captured["CombatStateTracker"].call_args[1]["is_recording"] is True
+
+    def test_attach_game_uses_config_auto_record_false(self, monkeypatch):
+        """ADR-P5.3: auto_record=False → CombatStateTracker(is_recording=False)。"""
+        import sys
+        import types
+        cfg = AppConfig()
+        cfg.auto_record = False
+        ctrl = AppController(cfg)
+        mock_mr = MagicMock()
+        mock_st = MagicMock()
+        mock_pred = MagicMock()
+        mock_rec = MagicMock()
+        mock_classes = {
+            "src.core.memory_reader": ("MemoryReader", mock_mr),
+            "src.core.state_tracker": ("CombatStateTracker", mock_st),
+            "src.model.predictor": ("ActionPredictor", mock_pred),
+            "src.data.recorder": ("CombatRecorder", mock_rec),
+        }
+        captured = {}
+        for mod_name, (cls_name, instance) in mock_classes.items():
+            m = types.ModuleType(mod_name)
+            cls = MagicMock(return_value=instance)
+            if cls_name == "CombatStateTracker":
+                captured["CombatStateTracker"] = cls
+            setattr(m, cls_name, cls)
+            monkeypatch.setitem(sys.modules, mod_name, m)
+
+        ok = ctrl.attach_game(MagicMock(), 0x140000000)
+        assert ok is True
+        assert captured["CombatStateTracker"].call_args[1]["is_recording"] is False
+
+    def test_attach_game_does_not_import_overlay(self, monkeypatch):
+        """P5.3: attach_game 不导入 src.ui.overlay（覆盖层是独立进程）。"""
+        import sys
+        ctrl = AppController(AppConfig())
+        # 记录 attach_game 调用期间是否导入了 src.ui.overlay
+        overlay_imported = []
+        real_import = __import__
+        def spy_import(name, *a, **kw):
+            if name == "src.ui.overlay":
+                overlay_imported.append(name)
+            return real_import(name, *a, **kw)
+        monkeypatch.setattr("builtins.__import__", spy_import)
+
+        mock_mr = MagicMock()
+        mock_st = MagicMock()
+        mock_pred = MagicMock()
+        mock_rec = MagicMock()
+        import types
+        mock_classes = {
+            "src.core.memory_reader": ("MemoryReader", mock_mr),
+            "src.core.state_tracker": ("CombatStateTracker", mock_st),
+            "src.model.predictor": ("ActionPredictor", mock_pred),
+            "src.data.recorder": ("CombatRecorder", mock_rec),
+        }
+        for mod_name, (cls_name, instance) in mock_classes.items():
+            m = types.ModuleType(mod_name)
+            setattr(m, cls_name, MagicMock(return_value=instance))
+            monkeypatch.setitem(sys.modules, mod_name, m)
+
+        ok = ctrl.attach_game(MagicMock(), 0x140000000)
+        assert ok is True
+        assert overlay_imported == []  # 未导入 overlay
 
     def test_attach_game_failure_rolls_back(self, monkeypatch):
         """attach_game 中途失败 → 返回 False，不附着。"""
@@ -311,7 +443,6 @@ class TestAttachGame:
             "src.core.memory_reader": "MemoryReader",
             "src.core.state_tracker": "CombatStateTracker",
             "src.model.predictor": "ActionPredictor",
-            "src.ui.overlay": "OverlayUI",
         }
         for mod_name, cls_name in cls_map.items():
             m = types.ModuleType(mod_name)
@@ -330,15 +461,12 @@ class TestDetachGame:
     def test_detach_cleans_up(self, deps):
         deps["controller"].detach_game()
         deps["recorder"].stop.assert_called_once()
-        deps["overlay"].stop.assert_called_once()
         assert deps["controller"].is_game_attached is False
         assert deps["controller"]._state is None
-        assert deps["controller"]._overlay is None
+        # P5.3: detach 不终止覆盖层子进程（独立进程，用户手动关闭）
+        assert deps["controller"]._overlay_proc is None
 
     def test_detach_idempotent(self):
         ctrl = AppController(AppConfig())
         ctrl.detach_game()  # 未附着也能安全调用
         assert ctrl.is_game_attached is False
-
-
-

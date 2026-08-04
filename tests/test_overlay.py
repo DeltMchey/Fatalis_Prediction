@@ -1,4 +1,4 @@
-"""P4 Step 5: OverlayUI tests — mock MemoryReader/Predictor UI 测试。
+"""P4 Step 5 + P5.3: OverlayUI tests — mock MemoryReader/Predictor UI 测试。
 
 策略：
   - MemoryReader 用 MagicMock(spec=MemoryReader) 模拟（无 pymem 依赖）
@@ -6,6 +6,10 @@
   - CombatStateTracker 用真实实例（纯逻辑）验证状态流
   - 不启动真实 DearPyGUI 窗口：DPG 调用通过 patch("src.ui.overlay.dpg") mock
   - _compute_frame 为纯逻辑方法，无需 DPG 即可测试
+
+P5.3（双进程架构）：
+  - OverlayUI 运行在独立进程——不再有 start/stop/show/hide/queue 命令
+  - run() 是唯一生命周期入口（阻塞直到窗口关闭）
 
 覆盖：
   - 构造：依赖存储、无 DPG 副作用
@@ -15,7 +19,8 @@
   - action_buffer 读取与清理
   - update_logic 异常处理
   - _apply_display DPG 更新
-  - 结构约束：无 pymem 直读、无 shared_state、_compute_frame 无 DPG
+  - 结构约束：无 pymem 直读、无 shared_state、_compute_frame 无 DPG、
+    无 P5.2 线程/队列命令
 """
 
 import logging
@@ -472,23 +477,6 @@ class TestDpgLifecycleSmoke:
         assert "text_state" in overlay._widgets
         assert "text_ai" in overlay._widgets
 
-    def test_start_spawns_daemon_thread(self, overlay):
-        """start() 启动 daemon 线程运行 run()。"""
-        with patch("src.ui.overlay.dpg") as mock_dpg, \
-                patch("src.ui.overlay.ctypes") as mock_ctypes, \
-                patch("src.ui.fonts.dpg"):
-            mock_ctypes.windll.user32.GetWindowLongW.return_value = 0
-            mock_ctypes.windll.user32.GetSystemMetrics.return_value = 1920
-            mock_dpg.is_dearpygui_running.return_value = False  # run() 立即退出
-            overlay.start()
-            assert overlay._thread is not None
-            assert overlay._thread.daemon is True
-            overlay._thread.join(timeout=5)
-            assert overlay._thread.is_alive() is False
-
-        mock_dpg.create_context.assert_called_once()
-        mock_dpg.destroy_context.assert_called_once()
-
     def test_destroy_calls_destroy_context(self, overlay):
         with patch("src.ui.overlay.dpg") as mock_dpg:
             overlay._destroy()
@@ -496,91 +484,43 @@ class TestDpgLifecycleSmoke:
 
 
 # =============================================================================
-# 14b. 命令队列（show/hide/stop 由 overlay 线程处理）
+# 14b. P5.3 结构约束：OverlayUI 无线程/队列命令（双进程架构）
 # =============================================================================
 
-class TestCommandQueue:
-    def test_process_show_command(self, overlay):
-        """show 命令 → configure_viewport(show=True) + visible=True。"""
-        with patch("src.ui.overlay.dpg") as mock_dpg:
-            overlay._visible = False
-            overlay._command_queue.put("show")
-            overlay._process_commands()
-        mock_dpg.configure_viewport.assert_called_with("overlay", show=True)
-        assert overlay._visible is True
+class TestNoInProcessCommandApi:
+    def test_no_thread_or_queue_command_methods(self):
+        """P5.3: OverlayUI 不应再有 start/stop/show/hide/queue 线程命令。
 
-    def test_process_hide_command(self, overlay):
-        """hide 命令 → configure_viewport(show=False) + visible=False。"""
-        with patch("src.ui.overlay.dpg") as mock_dpg:
-            overlay._visible = True
-            overlay._command_queue.put("hide")
-            overlay._process_commands()
-        mock_dpg.configure_viewport.assert_called_with("overlay", show=False)
-        assert overlay._visible is False
-
-    def test_process_stop_command(self, overlay):
-        """stop 命令 → _running=False（线程退出）。"""
-        overlay._running = True
-        overlay._command_queue.put("stop")
-        overlay._process_commands()
-        assert overlay._running is False
-
-    def test_show_hide_put_command(self, overlay):
-        """show()/hide()/stop() 仅投递队列命令——不直接调用 DPG。"""
-        with patch("src.ui.overlay.dpg") as mock_dpg:
-            overlay.show()
-            overlay.hide()
-            overlay.stop()
-        mock_dpg.configure_viewport.assert_not_called()  # 命令由线程处理
-        assert overlay._command_queue.qsize() == 3
-
-    def test_put_command_queue_full_drops_oldest(self, overlay):
-        """队列满时丢弃最旧命令，保留最新。"""
-        for cmd in ["show", "hide", "show", "hide", "show", "hide",
-                    "show", "hide", "show", "hide", "stop"]:
-            overlay._put_command(cmd)
-        # 最多 10 条——最旧的被丢弃，最新的是 stop
-        assert overlay._command_queue.qsize() == 10
-        commands = []
-        while not overlay._command_queue.empty():
-            commands.append(overlay._command_queue.get_nowait())
-        assert commands[-1] == "stop"
-
-
-# =============================================================================
-# 15. 结构约束：OverlayUI 不得启动自己的 DPG event loop
-# =============================================================================
-
-class TestNoOwnEventLoop:
-    def test_public_methods_no_own_loop(self):
-        """start/stop/show/hide 不启动自己的 DPG event loop。
-
-        这些方法仅投递 queue 命令——event loop 由 overlay 线程的
-        run() 管理，DPG 调用在 overlay 线程执行。
+        双进程架构下 OverlayUI 在独立进程运行——run() 是唯一入口。
         """
-        import inspect
         import src.ui.overlay as ov_mod
-        public_methods = [
-            ov_mod.OverlayUI.start,
-            ov_mod.OverlayUI.stop,
-            ov_mod.OverlayUI.show,
-            ov_mod.OverlayUI.hide,
-        ]
-        for method in public_methods:
-            src = inspect.getsource(method)
-            assert "start_dearpygui" not in src, f"{method.__name__} contains start_dearpygui"
-            assert "is_dearpygui_running" not in src, f"{method.__name__} contains is_dearpygui_running"
-            assert "render_dearpygui_frame" not in src, f"{method.__name__} contains render"
+        for name in ("start", "stop", "show", "hide", "is_alive",
+                     "_process_commands", "_put_command", "_command_queue",
+                     "_thread"):
+            assert not hasattr(ov_mod.OverlayUI, name), (
+                f"P5.3 应移除的线程命令仍存在: {name}"
+            )
 
-    def test_run_is_thread_target(self):
-        """run() 是唯一含 event loop 的方法（线程 target）。"""
+    def test_run_is_blocking_entry(self):
+        """run() 是唯一含 event loop 的入口（独立进程主线程）。"""
         import inspect
         import src.ui.overlay as ov_mod
         src = inspect.getsource(ov_mod.OverlayUI.run)
         assert "is_dearpygui_running" in src
         assert "render_dearpygui_frame" in src
-        assert "create_context" in src  # 独立 DPG context
-        assert "_destroy" in src        # finally 清理（_destroy 内 destroy_context）
+        assert "_setup_dpg" in src        # context+viewport 创建
+        assert "_destroy" in src          # finally 清理（_destroy 内 destroy_context）
+
+    def test_setup_dpg_contains_event_loop_primitives(self):
+        """_setup_dpg 创建 context/viewport/setup——在 run() 之前。"""
+        import inspect
+        import src.ui.overlay as ov_mod
+        src = inspect.getsource(ov_mod.OverlayUI._setup_dpg)
+        assert "create_context" in src
+        assert "create_viewport" in src
+        assert "setup_dearpygui" in src
+        assert "show_viewport" in src
+        assert "setup_cjk_font" in src  # P5.1 共享字体
 
 class TestStructuralConstraints:
     def test_no_direct_pymem_or_shared_state(self):

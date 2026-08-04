@@ -1,7 +1,12 @@
-"""P4 Step 5: OverlayUI — 黑龙雷达 DearPyGui 覆盖层界面。
+"""P4 Step 5 + P5.3: OverlayUI — 黑龙雷达 DearPyGui 覆盖层界面。
 
 从 ai_engine.py 迁移：
   - `Ultimate_Radar_UI` 类（原 L319–L469）整体迁移为 OverlayUI 类
+
+P5.3 双进程架构（ADR-P5.2）：
+  - OverlayUI 运行在**独立进程**（`python overlay.py`）的主线程
+  - 不再提供 start/stop/show/hide 线程命令——进程自管生命周期
+  - run() 阻塞直到窗口关闭（与 main.py / overlay.py 一致）
 
 设计约束（与架构计划 Step 5 一致）：
   - __init__ 只保存注入依赖，不创建 DPG context、不执行 ctypes
@@ -13,7 +18,6 @@
 """
 
 import ctypes
-import queue
 import threading
 import time
 import traceback
@@ -39,9 +43,9 @@ _AI_THROTTLE_INTERVAL: float = 0.5
 class OverlayUI:
     """黑龙战斗雷达覆盖层界面。
 
-    用法（P4.6 主程序组装）：
+    用法（P5.3 双进程组装）：
         ui = OverlayUI(memory_reader, state_tracker, predictor, action_buffer, action_lock)
-        ui.run()          # 阻塞，直到 DPG 窗口关闭
+        ui.run()          # 阻塞，直到 DPG 窗口关闭（独立进程主线程）
 
     线程模型（与 ai_engine.py 一致）：
       - OverlayUI 运行在主线程（DPG event loop）
@@ -52,6 +56,8 @@ class OverlayUI:
     # 窗口尺寸
     _WINDOW_WIDTH: int = 420
     _WINDOW_HEIGHT: int = 350
+    # 覆盖层 viewport 标题（FindWindowW 用）
+    _VP_TITLE: str = "overlay"
     # 休眠提示文本
     _DORMANT_TEXT: str = "未在虚黑城，雷达已休眠..."
     # Nova 预警文本
@@ -80,11 +86,7 @@ class OverlayUI:
         self._buffer = action_buffer
         self._lock = action_lock
         self._last_ai_time: float = 0.0      # AI 预测节流游标
-        self._widgets: dict = {}              # DPG widget 句柄
-        self._running: bool = False           # event loop 运行标志（run() 内设置）
-        self._visible: bool = False           # viewport 可见标志
-        self._thread: threading.Thread | None = None  # daemon 线程
-        self._command_queue: "queue.Queue[str]" = queue.Queue(maxsize=10)
+        self._widgets: dict = {}              # DPG widget 句柄（_setup_dpg 填充）
 
     # ================= 录制开关回调 =================
 
@@ -92,18 +94,15 @@ class OverlayUI:
         """checkbox 回调：切换录制状态（写入 state_tracker.is_recording）。"""
         self._state.is_recording = bool(value)
 
-    # ================= DPG 生命周期（独立线程） =================
+    # ================= DPG 生命周期 =================
 
-    # 覆盖层 viewport 标题（FindWindowW + configure_viewport 用）
-    _VP_TITLE: str = "overlay"
+    def _setup_dpg(self) -> None:
+        """创建 DPG context / 窗口 / widgets / viewport + Win32 透明窗口。
 
-    # 命令常量
-    _CMD_STOP: str = "stop"
-    _CMD_SHOW: str = "show"
-    _CMD_HIDE: str = "hide"
-
-    def _create_widgets(self) -> None:
-        """创建字体 + 窗口 + widgets（run() 在独立线程中调用）。"""
+        与 ai_engine.py 原 __init__ L331–L356 等价。仅在 run() 调用。
+        """
+        dpg.create_context()
+        # 共享 CJK 字体（P5.1）—— Dashboard 与 Overlay 同一加载函数
         from src.ui.fonts import setup_cjk_font
         setup_cjk_font()
 
@@ -116,6 +115,13 @@ class OverlayUI:
                              callback=self._on_recording_toggle)
             self._widgets["text_state"] = dpg.add_text("等待接敌...")
             self._widgets["text_ai"] = dpg.add_text("")
+
+        dpg.create_viewport(title=self._VP_TITLE, width=self._WINDOW_WIDTH,
+                            height=self._WINDOW_HEIGHT, decorated=False,
+                            always_on_top=True, clear_color=[0, 0, 0, 0])
+        dpg.setup_dearpygui()
+        dpg.show_viewport()
+        self._apply_win32_overlay()
 
     def _apply_win32_overlay(self) -> None:
         """设置 Win32 透明无边框覆盖层（ctypes）。仅 Windows 有效。"""
@@ -130,97 +136,22 @@ class OverlayUI:
              int(ctypes.windll.user32.GetSystemMetrics(1) * 0.25)))
 
     def _destroy(self) -> None:
-        """销毁 DPG context（在 run() finally 中调用）。"""
+        """销毁 DPG context。"""
         dpg.destroy_context()
 
-    # ================= 线程管理（Controller 调用） =================
-
-    def start(self) -> None:
-        """启动覆盖层 daemon 线程（幂等）。
-
-        线程运行 run()——创建独立 DPG context + viewport + event loop。
-        必须在 Dashboard 的 DPG context 完全初始化后调用（避免 GLFW 冲突）。
-        """
-        if self._thread is not None and self._thread.is_alive():
-            return
-        self._thread = threading.Thread(
-            target=self.run, daemon=True, name="OverlayUI"
-        )
-        self._thread.start()
-
-    def stop(self) -> None:
-        """请求线程退出（queue 命令，非阻塞）。"""
-        self._put_command(self._CMD_STOP)
-
-    def show(self) -> None:
-        """请求显示覆盖层 viewport（queue 命令，非阻塞）。"""
-        self._put_command(self._CMD_SHOW)
-
-    def hide(self) -> None:
-        """请求隐藏覆盖层 viewport（queue 命令，非阻塞）。"""
-        self._put_command(self._CMD_HIDE)
-
-    @property
-    def is_alive(self) -> bool:
-        """Overlay 线程是否运行。"""
-        return self._thread is not None and self._thread.is_alive()
-
-    # ================= 线程 target =================
-
     def run(self) -> None:
-        """线程 target——创建独立 DPG context + viewport + event loop。
+        """主循环（阻塞）：_setup_dpg → while running: update; render → _destroy。
 
-        所有 DPG 调用在此线程执行（thread-local context）。
-        永不直接调用——请使用 start()。main.py standalone 路径除外
-        （python main.py 直接调用 run() 阻塞主线程，向后兼容）。
+        与 ai_engine.py 原 run() L467–L469 等价，但用 try/finally 保证销毁。
+        P5.3：本方法运行在独立进程的主线程——每个进程只有一个 DPG context。
         """
-        self._running = True
-        dpg.create_context()
+        self._setup_dpg()
         try:
-            self._create_widgets()
-            dpg.create_viewport(title=self._VP_TITLE, width=self._WINDOW_WIDTH,
-                                height=self._WINDOW_HEIGHT, decorated=False,
-                                always_on_top=True, clear_color=[0, 0, 0, 0])
-            dpg.setup_dearpygui()
-            dpg.show_viewport()
-            self._apply_win32_overlay()
-            self._visible = True
-            while dpg.is_dearpygui_running() and self._running:
-                self._process_commands()
-                if self._visible:
-                    self.update_logic()
+            while dpg.is_dearpygui_running():
+                self.update_logic()
                 dpg.render_dearpygui_frame()
         finally:
             self._destroy()
-            self._visible = False
-            self._running = False
-
-    def _process_commands(self) -> None:
-        """处理 Controller 通过 queue 发来的命令（本线程执行 DPG 调用）。"""
-        while not self._command_queue.empty():
-            try:
-                cmd = self._command_queue.get_nowait()
-            except queue.Empty:
-                break
-            if cmd == self._CMD_STOP:
-                self._running = False
-            elif cmd == self._CMD_SHOW:
-                dpg.configure_viewport(self._VP_TITLE, show=True)
-                self._visible = True
-            elif cmd == self._CMD_HIDE:
-                dpg.configure_viewport(self._VP_TITLE, show=False)
-                self._visible = False
-
-    def _put_command(self, cmd: str) -> None:
-        """非阻塞投递命令——队列满时丢弃最旧命令，保留最新。"""
-        try:
-            self._command_queue.put_nowait(cmd)
-        except queue.Full:
-            try:
-                self._command_queue.get_nowait()  # 丢弃最旧
-            except queue.Empty:
-                pass
-            self._command_queue.put_nowait(cmd)
 
     # ================= 每帧刷新 =================
 

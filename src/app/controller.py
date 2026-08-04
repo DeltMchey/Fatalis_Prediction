@@ -1,10 +1,15 @@
-"""P5.1: AppController — 应用生命周期协调器。
+"""P5.1 + P5.3: AppController — 应用生命周期协调器。
 
 Dashboard（UI 层）通过 AppController 间接控制底层模块：
   - 游戏附着/分离（attach_game / detach_game）
   - Recorder 启停（state_tracker.is_recording / recorder.stop()）
-  - OverlayUI viewport 管理（create/hide/show/finalize）
+  - 覆盖层子进程（start_overlay / stop_overlay —— P5.3 双进程架构）
   - Trainer 子进程（train_lgbm.py）启动/取消/输出轮询
+
+P5.3 双进程架构（ADR-P5.2）：
+  - Overlay 是**独立进程**（`python overlay.py`），自管 DPG context + 生命周期
+  - 本 Controller 只负责**启动/终止**覆盖层子进程，不创建 OverlayUI 实例
+  - 因此 attach_game 不再导入 src.ui.overlay —— 仅组装 P4 数据模块
 
 设计约束:
   - 不直接操作 pymem / DPG widgets
@@ -26,7 +31,7 @@ logger = logging.getLogger("BlackDragon")
 
 
 class AppController:
-    """协调 Recorder / OverlayUI / Trainer 生命周期。
+    """协调 Recorder / Overlay 子进程 / Trainer 生命周期。
 
     与 Dashboard 的关系:
       Dashboard 持有 AppController 引用 → call commands + poll status.
@@ -39,8 +44,9 @@ class AppController:
         Args:
             config: AppConfig — 设置读写
 
-        P4 模块（state/recorder/predictor/reader/overlay/buffer/lock）初始为
+        P4 模块（state/recorder/predictor/reader/buffer/lock）初始为
         None，由 GameService 检测到游戏后通过 attach_game() 附着。
+        覆盖层是独立子进程（_overlay_proc），非 P4 模块。
         """
         self._config = config
 
@@ -49,12 +55,13 @@ class AppController:
         self._recorder = None       # CombatRecorder
         self._predictor = None      # ActionPredictor
         self._reader = None         # MemoryReader
-        self._overlay = None        # OverlayUI
         self._buffer = None         # deque
         self._lock = None           # threading.Lock
 
-        self._overlay_visible: bool = False
         self._game_attached: bool = False
+
+        # 覆盖层子进程（P5.3 双进程）—— 独立 python overlay.py
+        self._overlay_proc = None
 
         # 训练子进程管理
         self._training_proc = None
@@ -64,7 +71,7 @@ class AppController:
     # ================= 游戏附着 / 分离 =================
 
     def attach_game(self, pm, base) -> bool:
-        """游戏进程连接后初始化全部 P4 模块。
+        """游戏进程连接后初始化全部 P4 数据模块。
 
         Args:
             pm: pymem.Pymem 实例（已连接 MonsterHunterWorld.exe）
@@ -73,22 +80,22 @@ class AppController:
         Returns:
             bool: 是否成功附着。失败时回滚已创建的部分模块。
 
-        注意: 本方法不调用任何 DPG 方法（create_viewport 等在 start_overlay
-        由主线程调用）——因此可安全地从 GameService 后台线程调用。
+        注意: 本方法不创建 OverlayUI（P5.3 覆盖层是独立进程）——
+        也不调用任何 DPG 方法，因此可安全地从 GameService 后台线程调用。
         """
         # 惰性导入 P4 模块（避免模块级依赖）
         from src.core.memory_reader import MemoryReader
         from src.core.state_tracker import CombatStateTracker
         from src.model.predictor import ActionPredictor
         from src.data.recorder import CombatRecorder
-        from src.ui.overlay import OverlayUI
 
         # 暂存已创建的模块——失败时回滚
         created = {}
         try:
             reader = MemoryReader(pm, base)
             created["reader"] = reader
-            state = CombatStateTracker(is_recording=True)
+            # ADR-P5.3: 录制默认状态由 auto_record 配置决定
+            state = CombatStateTracker(is_recording=self._config.auto_record)
             created["state"] = state
             predictor = ActionPredictor(self._config.model_path)
             created["predictor"] = predictor
@@ -98,8 +105,6 @@ class AppController:
             created["lock"] = lock
             recorder = CombatRecorder(reader, state, buffer, lock)
             created["recorder"] = recorder
-            overlay = OverlayUI(reader, state, predictor, buffer, lock)
-            created["overlay"] = overlay
         except Exception:
             logger.error("attach_game 初始化失败", exc_info=True)
             return False
@@ -111,7 +116,6 @@ class AppController:
         self._buffer = buffer
         self._lock = lock
         self._recorder = recorder
-        self._overlay = overlay
         self._game_attached = True
 
         # 启动录制 daemon 线程
@@ -119,30 +123,19 @@ class AppController:
             recorder.start()
         except Exception:
             logger.error("启动录制失败", exc_info=True)
-
-        # 自动启动覆盖层线程（独立 DPG context + viewport）
-        # 此时 Dashboard 的 DPG 已完全初始化——时序分离避免 GLFW 冲突
-        try:
-            overlay.start()
-            self._overlay_visible = True
-        except Exception:
-            logger.error("自动启动覆盖层线程失败", exc_info=True)
         logger.info("游戏已附着，P4 模块初始化完成")
         return True
 
     def detach_game(self) -> None:
-        """游戏进程退出后清理全部 P4 模块。"""
-        if self._overlay is not None:
-            try:
-                self._overlay.stop()
-            except Exception:
-                pass
+        """游戏进程退出后清理全部 P4 数据模块。
+
+        覆盖层子进程是独立的——本方法不终止它（用户可手动关闭）。
+        """
         if self._recorder is not None:
             try:
                 self._recorder.stop()
             except Exception:
                 pass
-        self._overlay_visible = False
         self._game_attached = False
         # 清理引用（旧实例由 GC 回收）
         self._reader = None
@@ -151,7 +144,6 @@ class AppController:
         self._buffer = None
         self._lock = None
         self._recorder = None
-        self._overlay = None
         logger.info("游戏已分离，P4 模块已清理")
 
     # ================= 状态查询（Dashboard 轮询）=================
@@ -186,9 +178,11 @@ class AppController:
         return bool(self._predictor.is_loaded)
 
     @property
-    def is_overlay_visible(self) -> bool:
-        """覆盖层是否显示。"""
-        return self._overlay_visible
+    def is_overlay_running(self) -> bool:
+        """覆盖层子进程是否在运行（P5.3）。"""
+        if self._overlay_proc is None:
+            return False
+        return self._overlay_proc.poll() is None
 
     @property
     def is_training(self) -> bool:
@@ -215,32 +209,39 @@ class AppController:
             self._state.is_recording = bool(enabled)
 
     def start_overlay(self) -> bool:
-        """显示覆盖层（queue 命令——overlay 线程执行 DPG 调用）。
+        """启动覆盖层子进程（`python overlay.py`）。
 
-        attach_game 后覆盖层线程自动启动并显示——本方法用于重新显示
-        被隐藏的覆盖层。
+        P5.3：Overlay 是独立进程——每个进程自己的 DPG context + 主线程，
+        规避 DPG 2.x / GLFW 的 main-thread 限制（ADR-P5.2）。
+
+        Returns:
+            bool: 是否成功启动（已在运行/启动失败返回 False）。
         """
-        if self._overlay is None:
-            logger.warning("OverlayUI 未附着，无法显示覆盖层")
+        if self.is_overlay_running:
+            logger.info("覆盖层子进程已在运行")
             return False
         try:
-            self._overlay.show()
-            self._overlay_visible = True
-            return True
+            self._overlay_proc = subprocess.Popen(
+                [sys.executable, self._config.overlay_script],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         except Exception:
-            logger.error("显示覆盖层失败", exc_info=True)
+            logger.error("启动覆盖层子进程失败", exc_info=True)
+            self._overlay_proc = None
             return False
+        logger.info("覆盖层子进程已启动: %s", self._config.overlay_script)
+        return True
 
     def stop_overlay(self) -> bool:
-        """隐藏覆盖层（queue 命令——overlay 线程执行 DPG 调用）。"""
-        if self._overlay is None:
+        """终止覆盖层子进程。返回是否有进程被终止。"""
+        if not self.is_overlay_running:
             return False
         try:
-            self._overlay.hide()
-            self._overlay_visible = False
+            self._overlay_proc.terminate()
             return True
         except Exception:
-            logger.error("隐藏覆盖层失败", exc_info=True)
+            logger.error("终止覆盖层子进程失败", exc_info=True)
             return False
 
     def start_training(self) -> bool:
@@ -294,23 +295,22 @@ class AppController:
     # ================= 生命周期 =================
 
     def shutdown(self) -> None:
-        """优雅退出：停止录制 → 隐藏覆盖层 → 终止训练。"""
+        """优雅退出：停止录制 → 终止覆盖层子进程 → 终止训练。"""
         try:
             if self._recorder is not None:
                 self._recorder.stop()
         except Exception:
             logger.error("停止录制失败", exc_info=True)
         try:
-            if self._overlay is not None:
-                self._overlay.stop()
+            if self.is_overlay_running:
+                self._overlay_proc.terminate()
         except Exception:
-            pass
+            logger.error("终止覆盖层子进程失败", exc_info=True)
         try:
             if self.is_training:
                 self._training_proc.terminate()
         except Exception:
             pass
-        self._overlay_visible = False
         self._game_attached = False
         logger.info("BlackDragon 已关闭")
 

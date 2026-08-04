@@ -24,9 +24,15 @@ class TestDefaults:
     def test_default_data_dir(self):
         assert AppConfig().data_dir == "data"
 
-    def test_default_auto_start_overlay_false(self):
+    def test_default_auto_start_overlay_true(self):
+        """ADR-P5.3: 默认自动启动覆盖层子进程。"""
         cfg = AppConfig()
-        assert cfg.auto_start_overlay is False
+        assert cfg.auto_start_overlay is True
+
+    def test_default_auto_record_true(self):
+        """ADR-P5.3: 默认开启录制模式。"""
+        cfg = AppConfig()
+        assert cfg.auto_record is True
 
     def test_default_overlay_opacity(self):
         assert AppConfig().overlay_opacity == 1.0

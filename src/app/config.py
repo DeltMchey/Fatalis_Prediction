@@ -3,7 +3,7 @@
 为 Dashboard 控制中心提供可持久化的配置：
   - model_path: AI 模型路径
   - data_dir:   录制 CSV 输出目录
-  - auto_start_overlay / auto_start_recording: 启动行为
+  - auto_start_overlay / auto_record: 启动行为（ADR-P5.3）
   - overlay_opacity / prediction_interval: 运行参数
 
 设计约束:
@@ -34,10 +34,12 @@ class AppConfig:
 
     # ── 录制 ──
     data_dir: str = "data"
+    auto_record: bool = True          # ADR-P5.3: 默认开启录制
 
-    # ── Overlay ──
-    auto_start_overlay: bool = False
+    # ── Overlay (P5.3 dual-process) ──
+    auto_start_overlay: bool = True   # ADR-P5.3: 默认自动启动覆盖层子进程
     overlay_opacity: float = 1.0
+    overlay_script: str = "overlay.py"
 
     # ── 预测 ──
     prediction_interval: float = 0.5

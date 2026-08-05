@@ -40,6 +40,7 @@ coverage.xml
 # Temporary files
 *.tmp
 *.bak
+runtime-report.md
 
 # OS files
 Thumbs.db

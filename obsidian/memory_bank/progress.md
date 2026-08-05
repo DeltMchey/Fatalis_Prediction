@@ -10,14 +10,14 @@
 | **P2** | P0 修复 (Critical Fixes)         | **Complete**   | Logging, unified actions.py, centralized offsets.py, posture FSM, bare except sweep | v0.2.0 |
 | P3     | 测试体系 (Test Safety Net)         | **Complete**   | 182 tests (60% coverage), GitHub Actions CI                                         | v0.3.0 |
 | P4     | 架构重构 (Architecture Refactor)   | **Complete**   | src/core/, src/data/, src/model/, src/ui/, main.py                                  | —      |
-| P5     | 控制中心 (Dashboard + Overlay)     | **Complete**   | Dashboard, Bootstrap, Dual-Process, PyInstaller EXE                                 | —      |
-| P6     | 模型工程化 (Model Engineering)     | Planned        | Model versioning, incremental learning, GitHub Release v1.0.0                       | —      |
+| P5     | 控制中心 (Dashboard + Overlay)     | **Complete**   | Dashboard, Bootstrap, Dual-Process, PyInstaller EXE, Training Pipeline        | —      |
+| P6     | 模型工程化 (Model Engineering)     | Planned        | Model versioning, incremental learning, GitHub Release v1.0.0                 | —      |
 
 ---
 
 ## P5 — Control Center (Complete ✅)
 
-**P5 Dashboard ✅, P5.1 Bootstrap ✅, P5.2 Overlay Experiment ✅, P5.3 Dual-Process ✅, Frozen EXE ✅**
+**P5 Dashboard ✅, P5.1 Bootstrap ✅, P5.2 Overlay Experiment ✅, P5.3 Dual-Process ✅, P5.4 Training Pipeline ✅, Frozen EXE ✅**
 
 ### P5.3 — Dual-Process Overlay
 - [x] Revert P5.2 experimental code — restore `src/ui/overlay.py` to standalone design
@@ -42,13 +42,25 @@
 - [x] UTF-8 fix: stdout reconfigure for emoji output in frozen `--train`
 - [x] Training model save: `os.makedirs("models", exist_ok=True)`
 
+### P5.4 — Training Pipeline Integration
+- [x] `--pipeline` flag in `launch.py` — one-click `data_cleaner` → `train_lgbm`
+- [x] `controller.start_training()` uses `--pipeline` (frozen: `[exe, --pipeline]`, dev: `[python, launch.py, --pipeline]`)
+- [x] Unknown action defense: cleaner filters labels not in `ACTION_DB` + trainer secondary detection
+- [x] `stratify=y` with small-dataset fallback (prevent LightGBM "unseen labels" crash)
+- [x] NaN / non-numeric label warnings
+- [x] Frozen EXE support: `data_cleaner` hidden import in `build/BlackDragon.spec`
+- [x] 581 tests (569 baseline + 12 new); `pytest tests/ -q` all pass
+- [x] ADR-P5.4 documented (Decision: Option A — `--pipeline` flag)
+- [x] Frozen regression test: `BlackDragon.exe --pipeline` exit 0 (rebuild verified)
+- [x] README updated: 581 tests badge, `--pipeline` entry point, pipeline workflow, frozen section
+
 ### Dashboard UX (P5.3 → v1.0)
 - [x] Combat records display: `战斗记录: N 个` (not "CSV 文件")
 - [x] Training data status: `训练数据: ML_Ready_Dataset.csv ✓` / `未找到`
 - [x] Empty state hints: `暂无战斗记录（开始游戏录制后自动生成）`
 
 ### Release Engineering
-- [x] `README.md` updated (P5.3 / 551 tests / 94% / entry points)
+- [x] `README.md` updated (P5.3 / 556 tests / 94% / entry points)
 - [x] `LICENSE` (MIT), `CONTRIBUTING.md`, `SECURITY.md` added
 - [x] Legacy markers on `main.py` + `ai_engine.py`
 - [x] `obsidian/docs/legacy/` migration (15 files archived, `git mv`)
@@ -59,13 +71,13 @@
 
 ## Current State Summary
 
-- **Phase**: P5.3 — v1.0 Release Candidate (Dual-Process Overlay + Frozen EXE)
-- **Project runs**: Yes — `python launch.py` (Dev) / `BlackDragon.exe` (Frozen, 227 MB package)
-- **Tests**: **551** (27 test files, 100% pass rate)
+- **Phase**: P5.4 — v1.1.0 (Training Pipeline Integration)
+- **Project runs**: Yes — `python launch.py` (Dev) / `python launch.py --pipeline` (one-click train) / `BlackDragon.exe` (Frozen, 227 MB package)
+- **Tests**: **581** (27 test files, 100% pass rate)
 - **Coverage**: **94%** overall; P4 core 100%; Dashboard components 85-98%
 - **P5 modules**: `src/app/` (controller, config, game_service), `src/dashboard/`, `src/bootstrap/`, `src/ui/fonts.py`
 - **Root entries**: `launch.py` (primary), `overlay.py` (secondary), `main.py` (legacy), `ai_engine.py` (legacy)
 - **Build**: `build/BlackDragon.spec`, `build/BlackDragonOverlay.spec`, `scripts/build_exe.ps1`
 - **P4 core status**: `src/core/`, `src/model/`, `src/data/` — **zero diff** since P4.6
-- **KB v1.0**: 50 active docs + 16 legacy + 13 audit/build docs
-- **ADR**: ADR-P5.2 (dual-process), ADR-P5.3 (auto-start + recording)
+- **KB v1.1**: 50+ active docs + ADR-P5.4 (Training Pipeline)
+- **ADR**: ADR-P5.2 (dual-process), ADR-P5.3 (auto-start + recording), ADR-P5.4 (training pipeline)

@@ -2,11 +2,11 @@
 
 ## Current Phase
 
-**P5.3 Dual-Process Overlay — v1.0 Release Candidate (551 tests, 94% coverage)**
+**P5.4 Training Pipeline — v1.1.0 (581 tests, 94% coverage)**
 
 ## Current Goal
 
-BlackDragon v1.0 release candidate complete. Dual-process architecture (Dashboard + Overlay as separate Python processes) is fully implemented, tested, and packaged with PyInstaller. Frozen EXE support includes auto-start, model lifecycle, and training pipeline. RC runtime test passed all 6 scenarios.
+BlackDragon v1.1.0 — one-click training pipeline integrated into Dashboard. Dual-process architecture (Dashboard + Overlay) stable. Frozen EXE support includes auto-start, model lifecycle, and `--pipeline` one-click training. 581 tests, 94% coverage.
 
 ## Key Accomplishments (P5.3 → v1.0 RC)
 
@@ -17,16 +17,18 @@ BlackDragon v1.0 release candidate complete. Dual-process architecture (Dashboar
 | **PyInstaller EXE** | ✅ | Two EXEs (`BlackDragon.exe` + `BlackDragonOverlay.exe`), `--onedir` COLLECT |
 | **Frozen paths** | ✅ | `controller.data_dir` frozen-aware; training `cwd=<exe_dir>`; surfacing `models/` + `data/` |
 | **Model lifecycle** | ✅ | Surfaced model → train → overwrite → reload → predict (closed loop) |
-| **Frozen training** | ✅ | `--train` flag; `--pipeline` design ready for v1.1 |
+| **Frozen training** | ✅ | `--pipeline` flag: one-click data clean + model train (v1.1); `--train` preserved for backward compat |
+| **P5.4 Pipeline** | ✅ | `launch.py --pipeline` + Dashboard button → `data_cleaner` → `train_lgbm`; unknown-action defense; frozen support |
 | **RC test** | ✅ | 6/6 scenarios passed: install / dashboard / overlay / data / model / training |
 | **KB v1.0** | ✅ | 50 active docs; 16 legacy archived; ADR index; build/runtime/audit docs complete |
-| **Release files** | ✅ | LICENSE (MIT), CONTRIBUTING, SECURITY, updated README (551 tests, 94%) |
+| **Release files** | ✅ | LICENSE (MIT), CONTRIBUTING, SECURITY, updated README (581 tests, 94%) |
 
 ## Key Architecture Decisions
 
 - **ADR-P5.2**: Dual-process architecture (replaces failed in-process Overlay experiments)
 - **ADR-P5.3**: Auto-start + recording defaults; training data surfacing
-- **PyInstaller**: Two-EXE split with shared deps; `--train` / `--overlay` flag-based frozen mode
+- **ADR-P5.4**: Automated training pipeline integration — `--pipeline` flag, 2-step clean+train, unknown-action defense
+- **PyInstaller**: Two-EXE split with shared deps; `--pipeline` / `--train` / `--overlay` flag-based frozen mode
 
 ## Dual-Track Status
 
@@ -159,10 +161,10 @@ P3.1–P3.5 are done. 182 tests, 100% pass, 60% overall coverage (100% on config
 
 ## Current Test Metrics
 
-| Total tests | **365** (16 test files) |
+| Total tests | **581** (27 test files) |
 |--------|-------|
 | Pass rate | 100% |
-| Overall coverage | **72%** |
+| Overall coverage | **94%** |
 | `ai_engine.py` coverage | **43%** |
 | `state_tracker.py` coverage | **100%** |
 | `memory_reader.py` coverage | **100%** |
@@ -194,6 +196,7 @@ P3.1–P3.5 are done. 182 tests, 100% pass, 60% overall coverage (100% on config
 | `tests/test_recorder.py` | 34 | P4.4 | CombatRecorder: header, gating, recording, buffer, lifecycle, structural |
 
 | `tests/test_overlay.py` | 41 | P4.5 | OverlayUI: zone gating, state updates, nova, prediction, throttle, display, DPG lifecycle |
+| `tests/test_training_pipeline.py` | 11 | P5.4 | Pipeline flag: call order, frozen/dev cmd, clean/train failure, unknown action graceful |
 
 ## What Is Allowed Right Now
 
@@ -256,6 +259,7 @@ None. P4 Step 6 (Integration) is ready to begin.
 | Command | Function |
 |---------|----------|
 | `python launch.py` | P5 Dashboard control center (recommended) |
+| `python launch.py --pipeline` | P5.4 One-click data clean + model train |
 | `python main.py` | P4 standalone transparent overlay (legacy) |
 | `python ai_engine.py` | Legacy God Class (reference only) |
 
@@ -314,3 +318,18 @@ src/
 - P5.1 Bootstrap + game-less startup: ✅ functional — dep checker, GameService, lazy P4 module attach
 - 510 tests pass (MPLBACKEND=Agg), P4 core untouched
 - `python launch.py` runs Dashboard (control panel); `python main.py` runs standalone overlay (legacy)
+
+### P5.4 Training Pipeline Integration (v1.1.0)
+
+- **Status**: ✅ Complete
+- **Deliverables**:
+  - `launch.py` `--pipeline` flag: one-click `data_cleaner` → `train_lgbm`
+  - `controller.start_training()` uses `--pipeline` (frozen/Dev dual-mode)
+  - `data_cleaner.py`: unknown action filtering (labels not in `ACTION_DB`)
+  - `train_lgbm.py`: unknown label detection + `stratify=y` with small-dataset fallback + NaN/non-numeric warnings
+  - `build/BlackDragon.spec`: `data_cleaner` hidden import
+  - `tests/test_training_pipeline.py`: 11 pipeline integration tests
+  - ADR-P5.4 documented (Option A — `--pipeline` flag)
+- **Metrics**: 581 tests, 100% pass; frozen `BlackDragon.exe --pipeline` verified exit 0
+- **Constraint**: P4 core (`src/core/`, `src/model/`, `src/data/recorder.py`) unchanged — zero diff
+- **Known gap**: Action 117 (triggered original bug) filtered as unknown; needs `ACTION_DB` investigation

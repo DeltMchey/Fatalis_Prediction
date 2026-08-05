@@ -2,18 +2,19 @@
 
 ## Technology Stack
 
-| Category | Technology | Version (if known) |
-|----------|-----------|-------------------|
-| Language | Python 3 | Current unknown |
-| Game memory reading | `pymem` | Current unknown |
-| GUI / Overlay | `dearpygui` | Current unknown |
-| ML framework | `lightgbm` | Current unknown |
-| ML utilities | `scikit-learn` | Current unknown |
-| Data processing | `pandas`, `numpy` | Current unknown |
-| Visualization | `matplotlib` | Current unknown |
-| Model persistence | `joblib` | Current unknown |
+| Category | Technology | Version |
+|----------|-----------|---------|
+| Language | Python | 3.12.6 |
+| Game memory reading | `pymem` | 1.14.0 |
+| GUI / Overlay | `dearpygui` | 2.3 |
+| ML framework | `lightgbm` | 4.6.0 |
+| ML utilities | `scikit-learn` | 1.8.0 |
+| Data processing | `pandas`, `numpy` | 3.0.2, 2.4.4 |
+| Visualization | `matplotlib` | 3.10.9 |
+| Model persistence | `joblib` | 1.5.3 |
 | Window management | `ctypes` (Win32 API) | Windows SDK |
 | Concurrency | `threading` | stdlib |
+| Packaging | `pyinstaller` | 6.21.0 |
 
 ## Environment Constraints
 
@@ -64,21 +65,43 @@ Enrage Struct:         +0x1BE30
 
 ## File Inventory
 
-### Source Code (6 files)
-| File | Lines | Purpose |
-|------|-------|---------|
-| `ai_engine.py` | 328 | Main program: memory read + state machine + recording + AI inference + UI |
-| `data_cleaner.py` | 130 | ETL: raw CSV → ML-ready dataset |
-| `data_upgrade.py` | 76 | Backfill phase/enrage columns in old CSVs |
-| `train_lgbm.py` | 82 | LightGBM training script |
-| `enrage.py` | 82 | Memory scanner for reverse-engineering enrage struct |
-| `mod.py` | 248 | Deprecated simpler overlay (no AI, no recording) |
+### Source Code — src/ (P4/P5 modular architecture)
+| File | Purpose |
+|------|---------|
+| `src/core/state_tracker.py` | CombatStateTracker — pure battle state FSM |
+| `src/core/memory_reader.py` | MemoryReader — all pymem memory reads |
+| `src/model/predictor.py` | ActionPredictor — LightGBM load + inference |
+| `src/data/recorder.py` | CombatRecorder — CSV recording daemon |
+| `src/ui/overlay.py` | OverlayUI — transparent DPG overlay |
+| `src/ui/fonts.py` | Shared CJK font loading |
+| `src/app/config.py` | AppConfig — JSON settings persistence |
+| `src/app/controller.py` | AppController — lifecycle coordinator |
+| `src/app/game_service.py` | GameService — background game detection |
+| `src/dashboard/*.py` | Dashboard control center (main_window, status_bar, log_view, training_panel) |
+| `src/bootstrap/checker.py` | DependencyChecker — env check |
+| `src/config/actions.py` / `offsets.py` | Single source of truth for actions + memory offsets |
+
+### Root Entry Points
+| File | Purpose |
+|------|---------|
+| `launch.py` | P5.3 Dashboard + Overlay dual-process launcher (recommended) |
+| `overlay.py` | Standalone Overlay process entry |
+| `main.py` | Legacy P4 single-process entry |
+| `ai_engine.py` | Legacy God Class (reference only) |
+| `data_cleaner.py` / `data_upgrade.py` / `train_lgbm.py` | Offline data pipeline CLI tools |
+
+### Build System
+| File | Purpose |
+|------|---------|
+| `build/BlackDragon.spec` | PyInstaller spec — Dashboard EXE |
+| `build/BlackDragonOverlay.spec` | PyInstaller spec — Overlay EXE |
+| `scripts/build_exe.ps1` | One-click build (test → build → merge → surface) |
 
 ### Data Assets
 | File | Size | Description |
 |------|------|-------------|
-| `fatalis_combat_data_*.csv` (×17) | ~11 MB total | Raw recorded combat sessions |
-| `ML_Ready_Dataset.csv` | ~88 KB | Cleaned transition pairs for training |
+| `fatalis_combat_data_*.csv` (×19) | ~11 MB total | Raw recorded combat sessions |
+| `ML_Ready_Dataset.csv` | ~86 KB | Cleaned transition pairs for training |
 | `fatalis_ai_model.pkl` | ~18 MB | Trained LightGBM model |
 
 ### Reference Documents
@@ -89,30 +112,46 @@ Enrage Struct:         +0x1BE30
 
 ## Dependencies (requirements.txt)
 
-Current unknown — no `requirements.txt` exists yet. Dependencies inferred from imports:
+All pinned in `requirements.txt`:
 ```
-pymem
-dearpygui
-lightgbm
-scikit-learn
-pandas
-numpy
-matplotlib
-joblib
+dearpygui==2.3
+joblib==1.5.3
+lightgbm==4.6.0
+matplotlib==3.10.9
+numpy==2.4.4
+pandas==3.0.2
+Pymem==1.14.0
+scikit-learn==1.8.0
 ```
 
 ## Build / Run
 
 ```bash
-# Data pipeline
+# Development mode (requires game running for full functionality)
+python launch.py          # Dashboard + Overlay dual-process (recommended)
+python overlay.py         # Overlay process only
+python main.py            # Legacy P4 single-process
+
+# Offline data pipeline
 python data_cleaner.py    # Produces ML_Ready_Dataset.csv
 python train_lgbm.py      # Produces fatalis_ai_model.pkl + feature_importance.png
 
-# Main program (requires game running)
-python ai_engine.py       # Launches transparent overlay
+# PyInstaller EXE build
+.\scripts\build_exe.ps1 -Clean
+# → dist/BlackDragon/BlackDragon.exe + BlackDragonOverlay.exe
+# → release/BlackDragon-v1.1.0-windows.zip
 
-# Diagnostic tool (requires game running)
-python enrage.py          # Live memory scanner for enrage struct
+# Tests
+MPLBACKEND=Agg pytest tests/ -q   # 581 tests, 94% coverage
 ```
 
-No build system, no package configuration, no CI/CD.
+CI/CD: `.github/workflows/test.yml` (Windows + Ubuntu, Python 3.11/3.12)
+
+## Frozen Runtime (PyInstaller)
+
+- Two EXEs in one directory: `BlackDragon.exe` + `BlackDragonOverlay.exe`
+- Each EXE bundles Python runtime + dependencies in `_internal/`
+- Runtime data (data/ + models/) surfaced next to EXE (exe-relative paths)
+- Frozen path resolution: `sys.executable`-based (`<exe_dir>/data`, `<exe_dir>/models`)
+- Frozen subprocess spawn: `--pipeline` / `--train` / `--overlay` flag mode; `cwd=<exe_dir>`
+- UTF-8 stdout fix: `sys.stdout.reconfigure(encoding="utf-8")` for emoji output

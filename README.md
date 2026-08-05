@@ -3,7 +3,7 @@
 > AI-assisted hunting overlay for **Monster Hunter World** — predicts Fatalis's next attack in real-time.
 
 [![Phase](https://img.shields.io/badge/phase-P5.3%20Dual--Process-blue)](#roadmap)
-[![Tests](https://img.shields.io/badge/tests-556%20passed-brightgreen)](#roadmap)
+[![Tests](https://img.shields.io/badge/tests-581%20passed-brightgreen)](#roadmap)
 [![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)](#roadmap)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -42,8 +42,11 @@ python -m venv .venv
 pip install -r requirements.txt
 
 # 4. Train the model (one-time, uses included CSV data)
-python data_cleaner.py
-python train_lgbm.py
+#    Option A: 一键 pipeline（推荐）— 自动执行数据清洗 + 模型训练
+python launch.py --pipeline
+#    Option B: 手动两步 — 可单独调参 debug
+# python data_cleaner.py
+# python train_lgbm.py
 
 # 5. Launch the game, enter a Fatalis quest, then run:
 python launch.py            # P5.3 Dashboard + Overlay 双进程（推荐）
@@ -57,6 +60,7 @@ python launch.py            # P5.3 Dashboard + Overlay 双进程（推荐）
 | Command | Description | Status |
 |---------|-------------|:---:|
 | `python launch.py` | **Dashboard + Overlay** 双进程启动器（自动启动覆盖层） | ✅ Recommended |
+| `python launch.py --pipeline` | **一键数据清洗 + 模型训练**（自动执行 cleaner → trainer） | ✅ v1.1 |
 | `python overlay.py` | 独立 Overlay 进程入口（透明覆盖层） | ✅ |
 | `python main.py` | P4 单进程 overlay 入口 | ⚠️ Legacy |
 | `python ai_engine.py` | God Class 单体脚本 | ⚠️ Legacy |
@@ -65,9 +69,30 @@ python launch.py            # P5.3 Dashboard + Overlay 双进程（推荐）
 
 | Command | Description |
 |---------|-------------|
-| `python data_cleaner.py` | ETL: raw CSV → ML-ready dataset |
-| `python train_lgbm.py` | LightGBM training script |
-| `python data_upgrade.py` | Backfill phase/enrage columns in old CSVs |
+| `python launch.py --pipeline` | **一键训练**：自动执行 `data_cleaner` → `train_lgbm`（v1.1，Dashboard 按钮背后逻辑） |
+| `python data_cleaner.py` | ETL: raw CSV → ML-ready dataset（清洗+提纯，产生 2495 条转换对） |
+| `python train_lgbm.py` | LightGBM training script（~40-60 action classes, 300 estimators, early stopping） |
+| `python data_upgrade.py` | Backfill phase/enrage columns in old CSVs（独立工具，不纳入 pipeline） |
+
+### Pipeline Workflow
+
+```
+录制数据 (fatalis_combat_data_*.csv)
+    │
+    ▼
+data_cleaner.py   ← ACTION_MAPPING → Posture FSM → 提纯 7 维特征
+    │
+    ▼
+ML_Ready_Dataset.csv
+    │
+    ▼
+train_lgbm.py     ← LightGBM 6 维特征 → 300 estimators → early stopping
+    │
+    ▼
+fatalis_ai_model.pkl + feature_importance.png
+```
+
+`launch.py --pipeline` 和 Dashboard「模型训练」按钮均执行上述完整流程。未知动作（未在 `ACTION_DB` 定义）将在清洗阶段过滤并输出 warning。
 
 ## Documentation
 
@@ -104,7 +129,7 @@ BlackDragon/
 ├── models/                 # Trained artifacts (git-ignored)
 ├── archive/                # Deprecated files + legacy closure reports
 ├── obsidian/               # Knowledge base + project documentation
-├── tests/                  # Test suite (26 files, 556 tests, pytest + coverage)
+├── tests/                  # Test suite (27 files, 581 tests, pytest + coverage)
 ├── requirements.txt
 ├── CHANGELOG.md
 └── .gitignore
@@ -152,6 +177,18 @@ BlackDragon v1.0 uses two independent Python processes:
 
 This solves the DPG 2.x / GLFW main-thread limitation. See [`obsidian/Architecture/System_Architecture.md`](obsidian/Architecture/System_Architecture.md) for full architecture documentation.
 
+### Frozen EXE (PyInstaller)
+
+BlackDragon v1.1 supports standalone EXE deployment via PyInstaller:
+
+| Command | Description |
+|---------|-------------|
+| `BlackDragon.exe` | Dashboard + Overlay 双进程（等同于 `python launch.py`） |
+| `BlackDragon.exe --pipeline` | **冷冻环境一键训练**（等同于 `python launch.py --pipeline`） |
+
+Build: `.\scripts\build_exe.ps1 -Clean` → produces `dist/BlackDragon/` (two EXEs, ~227 MB).
+Both EXEs include embedded Python runtime + dependencies; no Python installation required on target machine.
+
 ## Known Limitations
 
 - Single monster only (Fatalis, zone 417)
@@ -171,6 +208,7 @@ This solves the DPG 2.x / GLFW main-thread limitation. See [`obsidian/Architectu
 | P5.1 | Bootstrap + Game-less Startup | ✅ Done |
 | P5.2 | Overlay Integration Experiment (deferred → ADR-P5.2) | ✅ Done |
 | P5.3 | Dual-Process Overlay Architecture (556 tests, 94% coverage) | ✅ Done |
+| **P5.4** | **Training Pipeline Integration** — one-click clean+train, unknown-action defense, frozen support (581 tests) | ✅ Done |
 | P6 | Model Engineering (versioning, incremental learning) | 📋 Future |
 
 See [`obsidian/Development/Development_Roadmap.md`](obsidian/Development/Development_Roadmap.md) for detailed roadmap. Historical roadmap: [`obsidian/docs/legacy/Refactoring_roadmap.md`](obsidian/docs/legacy/Refactoring_roadmap.md).

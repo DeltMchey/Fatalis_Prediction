@@ -168,3 +168,45 @@ class TestTrainMode:
         src = inspect.getsource(launch.main)
         assert '"--train" in sys.argv' in src
         assert "train_fatalis_ai" in src
+
+
+# =============================================================================
+# v1.1: --pipeline 训练入口（data_cleaner → train_lgbm）
+# =============================================================================
+
+class TestPipelineMode:
+    def test_main_handles_pipeline_flag(self, monkeypatch):
+        """--pipeline flag → 调用 clean_combat_data() + train_fatalis_ai()，不启动 Dashboard。"""
+        import sys
+        mock_clean = MagicMock()
+        mock_train = MagicMock()
+        monkeypatch.setattr("data_cleaner.clean_combat_data", mock_clean)
+        monkeypatch.setattr("train_lgbm.train_fatalis_ai", mock_train)
+        old_argv = sys.argv
+        try:
+            sys.argv = ["BlackDragon.exe", "--pipeline"]
+            launch.main()
+        finally:
+            sys.argv = old_argv
+        mock_clean.assert_called_once()
+        mock_train.assert_called_once()
+
+    def test_pipeline_flag_removed_from_argv(self, monkeypatch):
+        """--pipeline 应从 sys.argv 中移除。"""
+        import sys
+        monkeypatch.setattr("data_cleaner.clean_combat_data", MagicMock())
+        monkeypatch.setattr("train_lgbm.train_fatalis_ai", MagicMock())
+        old_argv = sys.argv
+        try:
+            sys.argv = ["BlackDragon.exe", "--pipeline", "extra"]
+            launch.main()
+            assert "--pipeline" not in sys.argv
+        finally:
+            sys.argv = old_argv
+
+    def test_main_has_pipeline_flag_detection(self):
+        """main() 应包含 --pipeline 检测逻辑。"""
+        import inspect
+        src = inspect.getsource(launch.main)
+        assert '"--pipeline" in sys.argv' in src
+        assert "clean_combat_data" in src

@@ -223,8 +223,8 @@ class TestTraining:
         # 队列已排空
         assert deps["controller"].get_training_output() == []
 
-    def test_start_training_frozen_uses_train_flag(self, deps, monkeypatch):
-        """冻结模式: start_training 应使用 [exe, --train] 而非 [exe, train_lgbm.py]。
+    def test_start_training_frozen_uses_pipeline_flag(self, deps, monkeypatch):
+        """冻结模式: start_training 应使用 [exe, --pipeline] 而非 [exe, train_lgbm.py]。
 
         防止 BlackDragon.exe train_lgbm.py 重新启动 Dashboard。
         """
@@ -240,7 +240,7 @@ class TestTraining:
         ok = deps["controller"].start_training()
         assert ok is True
         cmd = subprocess.Popen.call_args[0][0]
-        assert cmd == [r"C:\dist\BlackDragon.exe", "--train"]
+        assert cmd == [r"C:\dist\BlackDragon.exe", "--pipeline"]
 
 
 # =============================================================================
@@ -264,7 +264,7 @@ class TestFrozenPaths:
         assert ctrl.data_dir == Path("data")
 
     def test_start_training_frozen_flag(self, deps, monkeypatch):
-        """冻结模式 start_training 传 [exe, --train]（覆盖层冻结分支）。"""
+        """冻结模式 start_training 传 [exe, --pipeline]（覆盖层冻结分支）。"""
         import subprocess
         import sys
         proc = MagicMock()
@@ -275,7 +275,7 @@ class TestFrozenPaths:
         monkeypatch.setattr(sys, "executable", r"C:\dist\BlackDragon.exe")
         deps["controller"].start_training()
         cmd = subprocess.Popen.call_args[0][0]
-        assert cmd == [r"C:\dist\BlackDragon.exe", "--train"]
+        assert cmd == [r"C:\dist\BlackDragon.exe", "--pipeline"]
 
 
 # =============================================================================

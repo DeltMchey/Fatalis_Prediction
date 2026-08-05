@@ -170,3 +170,153 @@ class TestMissingCsvLogging:
 
         messages = [r.message for r in caplog.records if r.levelno >= logging.ERROR]
         assert any("找不到" in m for m in messages), f"未记录缺失错误: {messages}"
+
+
+# =============================================================================
+# 5. 未知动作 label 处理（v1.1.1 — 训练崩溃根因修复）
+# =============================================================================
+
+class TestUnknownLabelFiltering:
+    """训练阶段检测并过滤未在 ACTION_DB 中定义的 label。
+
+    根因：未知动作 label 通过清洗进入训练集 → train_test_split 无序分层时
+    稀有类全入 test → LightGBM LabelEncoder "unseen labels" 崩溃。
+    修复：训练前检测未知 label + 输出具体 ID + 过滤 + 分层抽样。
+    """
+
+    def test_train_with_invalid_label_does_not_crash(self, pipeline_workdir, capsys):
+        """数据集混入未知 label 117 → 训练不崩溃，117 被过滤，模型正常保存。"""
+        df = make_mini_dataset(rows_per_class=50, classes=[37, 53, 81, 129])
+        # 混入 3 条未知 label 117（足以通过 >=3 过滤，触发旧 bug）
+        unknown_rows = df.iloc[:3].copy()
+        unknown_rows["next_action"] = 117
+        df = pd.concat([df, unknown_rows], ignore_index=True)
+        write_mini_dataset(pipeline_workdir, df)
+
+        train_lgbm.train_fatalis_ai()
+
+        model = joblib.load(pipeline_workdir / "models" / "fatalis_ai_model.pkl")
+        assert 117 not in [int(c) for c in model.classes_]
+        captured = capsys.readouterr()
+        assert "117" in captured.out
+        assert "未知动作" in captured.out
+
+    def test_train_all_invalid_labels_graceful(self, pipeline_workdir, capsys):
+        """数据集全部为未知 label → 优雅停止，不崩溃，不覆盖旧模型。"""
+        df = make_mini_dataset(rows_per_class=10, classes=[37, 53])
+        df["next_action"] = 117
+        write_mini_dataset(pipeline_workdir, df)
+
+        # 预置旧模型，验证不被覆盖
+        old_model = pipeline_workdir / "models" / "fatalis_ai_model.pkl"
+        old_model.write_bytes(b"OLD")
+
+        train_lgbm.train_fatalis_ai()
+
+        assert old_model.read_bytes() == b"OLD", "旧模型被覆盖"
+        captured = capsys.readouterr()
+        assert "未知动作" in captured.out
+        assert "117" in captured.out
+
+    def test_stratified_split_keeps_all_classes_in_both(self, pipeline_workdir):
+        """stratify=y 保证每个 >=3 的类在 train/test 中都有实例。"""
+        from sklearn.model_selection import train_test_split
+        df = make_mini_dataset(rows_per_class=10, classes=[37, 53, 81])
+        write_mini_dataset(pipeline_workdir, df)
+
+        # 直接验证 train_test_split 行为（与 train_fatalis_ai 相同的参数）
+        y = df["next_action"]
+        _, _, y_train, y_test = train_test_split(
+            df[["distance"]], y, test_size=0.2, random_state=42, stratify=y
+        )
+        train_classes = set(int(c) for c in y_train.unique())
+        test_classes = set(int(c) for c in y_test.unique())
+        assert train_classes == {37, 53, 81}
+        assert test_classes == {37, 53, 81}
+
+
+# =============================================================================
+# 6. 极小数据集 stratify 降级（v1.1.2 — 审查 Must Fix）
+# =============================================================================
+
+# 30 个真实 ACTION_DB 战斗动作（用于构造 30 classes × 3 samples = 90 rows）
+_SMALL_CLASSES = [
+    37, 53, 81, 129, 138, 49, 73, 107, 115, 119, 121, 122, 98, 99, 100, 101,
+    131, 132, 133, 140, 141, 142, 143, 144, 145, 84, 85, 86, 87, 78,
+]
+
+
+class TestStratifySmallDatasetFallback:
+    """当 ceil(test_size * n) < n_classes 时 stratify 会抛 ValueError。
+
+    修复：检测并降级为非分层 split + warning，保证极小数据集仍可训练。
+    """
+
+    def test_small_dataset_fallback_without_crash(self, pipeline_workdir, capsys):
+        """30 classes × 3 samples = 90 rows → 降级为非分层 split，训练不崩溃。"""
+        df = make_mini_dataset(rows_per_class=3, classes=_SMALL_CLASSES)
+        assert df["next_action"].nunique() == 30
+        write_mini_dataset(pipeline_workdir, df)
+
+        train_lgbm.train_fatalis_ai()  # 不抛异常即通过
+
+        captured = capsys.readouterr()
+        assert "Dataset too small for stratified split" in captured.out
+        assert "test samples=18" in captured.out
+        assert "classes=30" in captured.out
+        assert "Fallback to non-stratified split" in captured.out
+
+        # 模型仍正常保存
+        model_path = pipeline_workdir / "models" / "fatalis_ai_model.pkl"
+        assert model_path.exists(), "降级路径下模型未保存"
+
+    def test_normal_dataset_still_stratified(self, pipeline_workdir, capsys):
+        """正常数据（2000+ samples / 4 classes）→ 不触发降级，无 fallback warning。"""
+        df = make_mini_dataset(rows_per_class=500, classes=[37, 53, 81, 129])
+        assert len(df) == 2000
+        write_mini_dataset(pipeline_workdir, df)
+
+        train_lgbm.train_fatalis_ai()
+
+        captured = capsys.readouterr()
+        assert "Dataset too small for stratified split" not in captured.out
+
+
+# =============================================================================
+# 7. 数据质量 warning（v1.1.2 — 审查 Should Fix A/B）
+# =============================================================================
+
+class TestLabelDataQualityWarnings:
+    def test_nan_label_warning(self, pipeline_workdir, capsys):
+        """next_action 含 NaN → 过滤并输出 "Removed N rows with empty labels"。"""
+        df = make_mini_dataset(rows_per_class=50, classes=[37, 53, 81, 129])
+        # 把 3 行 next_action 置为 NaN（列转 float，to_csv 写空 → read 回 NaN）
+        df.loc[df.index[:3], "next_action"] = float("nan")
+        write_mini_dataset(pipeline_workdir, df)
+
+        train_lgbm.train_fatalis_ai()
+
+        captured = capsys.readouterr()
+        assert "Removed 3 rows with empty labels" in captured.out
+
+        # 训练仍成功（200 - 3 = 197 行）
+        model_path = pipeline_workdir / "models" / "fatalis_ai_model.pkl"
+        assert model_path.exists()
+
+    def test_non_numeric_label_warning(self, pipeline_workdir, capsys):
+        """next_action 含非数值 'abc' → int(v) 安全降级 + warning，训练不崩溃。"""
+        df = make_mini_dataset(rows_per_class=50, classes=[37, 53, 81, 129])
+        # 把 1 行 next_action 改为字符串（列转 object）
+        df = df.astype({"next_action": object})
+        df.loc[df.index[0], "next_action"] = "abc"
+        write_mini_dataset(pipeline_workdir, df)
+
+        train_lgbm.train_fatalis_ai()
+
+        captured = capsys.readouterr()
+        assert "非数值 label" in captured.out
+        assert "abc" in captured.out
+
+        # 训练仍成功（199 行有效）
+        model_path = pipeline_workdir / "models" / "fatalis_ai_model.pkl"
+        assert model_path.exists()

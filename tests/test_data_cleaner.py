@@ -329,3 +329,52 @@ class TestOutputFormat:
         df = run_cleaner(pipeline_workdir, make_rows([37, 53, 81, 129, 138]))
         assert df is not None
         assert len(df) == 4
+
+
+# =============================================================================
+# 11. 未知动作过滤（v1.1.1 — 训练崩溃根因修复）
+# =============================================================================
+
+class TestUnknownActionFiltering:
+    """未在 ACTION_DB 中定义的动作（如 117）不得作为 next_action 输出。
+
+    根因：未知动作进入训练 label → train_test_split 无序分层时稀有类全入 test
+    → LightGBM LabelEncoder "unseen labels" 崩溃。清洗阶段过滤 + 输出 warning。
+    """
+
+    def test_unknown_action_not_in_output(self, pipeline_workdir, capsys):
+        """未知动作 117 不作为 next_action 输出，并打印 warning。"""
+        # 37 → 117（未知）→ 53：117 的转换被过滤，37→53 保留
+        df = run_cleaner(pipeline_workdir, make_rows([37, 117, 53]))
+        assert df is not None
+        assert "next_action" in df.columns
+        assert (df["next_action"] == 117).sum() == 0
+        captured = capsys.readouterr()
+        assert "未知动作" in captured.out
+        assert "117" in captured.out
+
+    def test_known_action_still_in_output(self, pipeline_workdir):
+        """已知动作不受影响，正常作为 next_action 输出。"""
+        df = run_cleaner(pipeline_workdir, make_rows([37, 53]))
+        assert df is not None
+        assert (df["next_action"] == 53).sum() >= 1
+
+    def test_multiple_unknown_actions_all_filtered(self, pipeline_workdir, capsys):
+        """多个未知动作（117, 118）全部过滤，warning 列出全部 ID。"""
+        df = run_cleaner(pipeline_workdir, make_rows([37, 117, 118, 53]))
+        assert df is not None
+        assert (df["next_action"] == 117).sum() == 0
+        assert (df["next_action"] == 118).sum() == 0
+        captured = capsys.readouterr()
+        assert "117" in captured.out
+        assert "118" in captured.out
+
+    def test_all_unknown_actions_graceful(self, pipeline_workdir, capsys):
+        """全部为未知动作 → 无有效转换，优雅返回不崩溃。"""
+        # 37→117（未知）→118（未知）：两个未知动作都作为 target 被过滤
+        result = run_cleaner(pipeline_workdir, make_rows([37, 117, 118]))
+        assert result is None
+        captured = capsys.readouterr()
+        assert "未知动作" in captured.out
+        assert "117" in captured.out
+        assert "118" in captured.out

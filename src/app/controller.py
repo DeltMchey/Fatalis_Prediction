@@ -4,7 +4,7 @@ Dashboard（UI 层）通过 AppController 间接控制底层模块：
   - 游戏附着/分离（attach_game / detach_game）
   - Recorder 启停（state_tracker.is_recording / recorder.stop()）
   - 覆盖层子进程（start_overlay / stop_overlay —— P5.3 双进程架构）
-  - Trainer 子进程（train_lgbm.py）启动/取消/输出轮询
+  - Trainer 子进程（--pipeline: data_cleaner → train_lgbm）启动/取消/输出轮询
 
 P5.3 双进程架构（ADR-P5.2）：
   - Overlay 是**独立进程**（`python overlay.py`），自管 DPG context + 生命周期
@@ -270,11 +270,11 @@ class AppController:
             return False
 
     def start_training(self) -> bool:
-        """启动训练子进程。
+        """启动训练子进程（v1.1: --pipeline = data_cleaner → train_lgbm）。
 
         运行模式（PyInstaller 打包支持）：
-          - 开发模式:  [sys.executable, "train_lgbm.py"]
-          - 冻结模式:  [sys.executable, "--train"]（同一 exe 的训练模式）
+          - 开发模式:  [sys.executable, "launch.py", "--pipeline"]
+          - 冻结模式:  [sys.executable, "--pipeline"]（同一 exe 的流水线模式）
         由 getattr(sys, "frozen", False) 检测当前运行环境。
 
         返回是否成功启动（已在训练时返回 False）。
@@ -283,13 +283,13 @@ class AppController:
             return False
         try:
             if getattr(sys, "frozen", False):
-                # 冻结模式：spawn 同 exe 的 --train 训练模式
-                cmd = [sys.executable, "--train"]
+                # 冻结模式：spawn 同 exe 的 --pipeline 训练模式
+                cmd = [sys.executable, "--pipeline"]
                 # 训练脚本始终在 exe 所在目录运行（不依赖 CWD —— 兼容双击/快捷方式/其他目录启动）
                 popen_kwargs = {"cwd": os.path.dirname(sys.executable)}
             else:
-                # 开发模式：python train_lgbm.py
-                cmd = [sys.executable, self._config.training_script]
+                # 开发模式：python launch.py --pipeline
+                cmd = [sys.executable, "launch.py", "--pipeline"]
                 popen_kwargs = {}
             self._training_proc = subprocess.Popen(
                 cmd,
@@ -308,7 +308,7 @@ class AppController:
             target=self._read_training_output, daemon=True
         )
         self._training_thread.start()
-        logger.info("训练已启动: %s", self._config.training_script)
+        logger.info("训练已启动: %s", "launch.py --pipeline")
         return True
 
     def cancel_training(self) -> bool:

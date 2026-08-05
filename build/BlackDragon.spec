@@ -19,7 +19,7 @@ PROJECT_ROOT = Path(SPECPATH).parent if 'SPECPATH' in dir() else Path('.')
 datas = [
     # AI model (17.6 MB) — used by ActionPredictor at runtime
     (str(PROJECT_ROOT / 'models' / 'fatalis_ai_model.pkl'), 'models'),
-    # Training dataset (85.8 KB) — used by train_fatalis_ai() via --train mode
+    # Training dataset (85.8 KB) — used by train_fatalis_ai() via --train / --pipeline mode
     (str(PROJECT_ROOT / 'data' / 'ML_Ready_Dataset.csv'), 'data'),
 ]
 
@@ -51,6 +51,8 @@ hiddenimports = [
     'src.bootstrap.checker',
     'src.config.actions', 'src.config.offsets',
     'src.logging_config',
+    # ── P5.4: Training pipeline — data_cleaner.py (dynamically imported in launch --pipeline) ──
+    'data_cleaner',
 ]
 
 # ---- Exclude unused heavy modules to reduce size ----

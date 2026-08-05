@@ -12,12 +12,14 @@ def clean_combat_data():
 
     # ==================== 动作分类与映射集 (从 src/config/actions.py 导入) ====================
     from src.config.actions import (
-        ACTION_MAPPING, MINOR_AND_PASSIVE, SCRIPTED_IDS, DOWN_IDS,
+        ACTION_DB, ACTION_MAPPING, MINOR_AND_PASSIVE, SCRIPTED_IDS, DOWN_IDS,
         POSTURE_STAND, POSTURE_PRONE, POSTURE_FLY,
     )
 
     EXCLUDE_TARGETS = MINOR_AND_PASSIVE | SCRIPTED_IDS
     all_transitions = []
+    # v1.1.1: 收集未在 ACTION_DB 中定义的未知动作（训练阶段会导致 unseen label 崩溃）
+    unknown_targets: set = set()
 
     for file in all_files:
         print(f"🔄 正在处理: {file}")
@@ -69,6 +71,11 @@ def clean_combat_data():
             if last_row is not None and action_id != last_mapped_action:
                 target_action = action_id
                 if target_action not in EXCLUDE_TARGETS and last_posture != 4:
+                    # v1.1.1: 过滤未知动作——未在 ACTION_DB 中定义的动作不作为训练 label
+                    #（否则训练阶段 LightGBM LabelEncoder 对稀有类 split 产生 unseen label 崩溃）
+                    if target_action not in ACTION_DB:
+                        unknown_targets.add(target_action)
+                        continue
                     all_transitions.append({
                         'distance': last_row['distance'],
                         'relative_angle': last_row['relative_angle'],
@@ -83,11 +90,18 @@ def clean_combat_data():
             last_posture = current_posture
             last_mapped_action = action_id  # 更新游标为映射后的动作
 
+    # v1.1.1: 输出未知动作过滤警告（列出具体 action_id）
+    if unknown_targets:
+        print(f"⚠️ 已过滤 {len(unknown_targets)} 个未知动作 ID {sorted(unknown_targets)}（未在 ACTION_DB 中定义，训练时会导致崩溃）")
+
     if not all_transitions:
         print("⚠️ 未提取到有效数据。")
         return
 
     clean_df = pd.DataFrame(all_transitions)
+    # v1.1: 写入前备份已有训练数据集，防止 pipeline 失败时旧数据丢失
+    if os.path.exists("data/ML_Ready_Dataset.csv"):
+        os.replace("data/ML_Ready_Dataset.csv", "data/ML_Ready_Dataset.csv.bak")
     clean_df.to_csv("data/ML_Ready_Dataset.csv", index=False)
     print(f"✅ V4.5 纯粹观测流(含起手映射)数据提纯完成！有效样本: {len(clean_df)} 条")
 

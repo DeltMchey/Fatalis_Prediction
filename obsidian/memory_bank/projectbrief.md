@@ -30,4 +30,4 @@ Predict Fatalis's next attack in real-time and display it as a transparent in-ga
 
 ## Current Status
 
-Pre-refactoring monolithic script. All logic in `ai_engine.py` (328 lines). Phase P1 — Project Standardization — is active.
+BlackDragon v1.1.0 (P5.4 Training Pipeline Integration). Modular `src/` structure (core/model/data/ui/app/dashboard/bootstrap) extracted from the original God Class. Primary entry is `python launch.py` (Dashboard + Overlay dual-process). One-click training via `python launch.py --pipeline` or Dashboard button. PyInstaller frozen EXE distribution (`BlackDragon.exe` + `BlackDragonOverlay.exe`) ready. 581 tests, 94% coverage.

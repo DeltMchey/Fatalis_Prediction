@@ -4,6 +4,110 @@
 
 ---
 
+### 2026-08-05 — Stratify Small-Dataset Fallback + Label Data Quality (v1.1.2)
+
+#### Phase
+P5.4 Training Pipeline — Regression Fix ✅
+
+#### Completed
+- **修复 stratify 极小数据集回归风险**（审查 Must Fix）
+  - `train_lgbm.py`: `train_test_split` 前计算 `_n_samples` / `_n_classes` / `_test_size_samples`
+  - `test_size_samples >= n_classes` → 保持 `stratify=y`（正常数据 2000+ samples / 40~50 classes 不变）
+  - `test_size_samples < n_classes` → 降级 `stratify=None` + warning
+    `⚠️ Dataset too small for stratified split: test samples=X, classes=Y. Fallback to non-stratified split.`
+  - 修复前: sklearn 抛 `ValueError: test_size should be greater or equal to number of classes`
+- **NaN label warning**（审查 Should Fix A）
+  - `Removed N rows with empty labels.` — 不再静默丢弃
+- **非数值 label 安全转换**（审查 Should Fix B）
+  - `pd.to_numeric(errors='coerce')` 将 `'37'→37`、`'abc'→NaN` → 过滤 + warning
+  - 修复测试暴露的隐藏 bug: 手工编辑 CSV 后整列变 object dtype，原 `int(v)` 会误杀全部数值 label
+
+#### API
+- 无公共 API 变化；`train_fatalis_ai()` 签名不变
+
+#### Design Decisions
+- 正常数据（2000+ / 40~50 classes）路径完全不变——仍用 stratify
+- 降级仅发生在极小数据集，输出明确 warning（非静默 catch）
+- 保持: `src/core/` 零 diff、`src/data/recorder.py` 零 diff、模型格式不变、predictor 不变
+
+#### Metrics
+- Tests: 577 → **581**（+4 net: small-dataset fallback 2 + NaN warning 1 + non-numeric warning 1）
+- 全部通过: `pytest tests/ -q` → 581 passed
+
+#### Review
+- 待 reviewer 审查；需重建 EXE 使 frozen `--pipeline` 生效
+
+---
+
+### 2026-08-05 — Training Pipeline Bug Fix: Unknown Action Labels (v1.1.1)
+
+#### Phase
+P5.4 Training Pipeline — Bug Fix ✅
+
+#### Completed
+- **修复训练崩溃**: `ValueError: y contains previously unseen labels: [np.int64(117)]`
+  - 根因: 原始 CSV 含未在 `ACTION_DB` 中定义的动作（如 117）→ 通过清洗成为 `next_action` label → `train_test_split` 无序分层时将稀有类全放入 test → LightGBM 4.6.0 LabelEncoder "unseen labels" 崩溃
+  - **方案 A（清洗阶段）**: `data_cleaner.py` 过滤未在 `ACTION_DB` 中定义的 target_action，收集 `unknown_targets` 并输出 warning（具体 action_id）
+  - **方案 B（训练阶段）**: `train_lgbm.py` 训练前检测未知 label，输出具体 ID + 过滤；丢弃 NaN label；空数据集优雅停止（不覆盖旧模型）
+  - **防御性**: `train_test_split` 添加 `stratify=y`——保证每个 >=3 的类在 train/test 中都有实例，杜绝稀有类全入 test 的崩溃机制
+  - 无 catch Exception 兜底——显式处理未知动作
+
+#### API
+- 无公共 API 变化；`train_fatalis_ai()` / `clean_combat_data()` 签名不变
+- 新增 warning 输出（stdout + logger.warning）
+
+#### Design Decisions
+- 未知动作 = 不在 `ACTION_DB` 中定义的动作 ID（如 117, 118）
+- 双阶段防御: cleaner 源头过滤（主）+ trainer 二次检测（兜底，防手工构造数据集）
+- `stratify=y` 修复根因机制（无序分层），非只处理 117 单例
+- 保持: `src/core/` 零 diff、`src/data/recorder.py` 零 diff、pipeline 架构不变、模型 .pkl 格式兼容
+
+#### Metrics
+- Tests: 569 → **577**（+8 net: cleaner unknown-filter 4 + trainer invalid-label 3 + pipeline graceful 1）
+- 全部通过: `pytest tests/ -q` → 577 passed
+
+#### Review
+- 待 reviewer 审查；涉及数据管道脚本需重建 EXE（frozen `--pipeline` 已含 `data_cleaner` hidden import）
+
+---
+
+### 2026-08-05 — P5.4 Training Pipeline Integration (v1.1)
+
+#### Phase
+P5 Control Center (控制中心) — Training Pipeline ✅
+
+#### Completed
+- **`--pipeline` 一键训练流程**（ADR-P5.4：data_cleaner → train_lgbm，2 步骤）
+  - `launch.py`: 新增 `--pipeline` flag handler——`clean_combat_data()` → `train_fatalis_ai()`；`--train` 保留向后兼容
+  - `src/app/controller.py`: `start_training()` 改为 `--pipeline`（冻结模式 `[exe, --pipeline]`，开发模式 `[python, launch.py, --pipeline]`）；TrainingPanel PIPE 捕获不变
+  - `build/BlackDragon.spec`: hiddenimports 新增 `'data_cleaner'`（`data_upgrade` 不纳入——数据格式已固定）
+- **数据安全增强**
+  - `data_cleaner.py`: 写入前备份 `ML_Ready_Dataset.csv` → `.bak`
+  - `train_lgbm.py`: 显式检查输入数据集存在（clean 失败时停止）+ 写入前备份 `fatalis_ai_model.pkl` → `.bak`（训练失败不覆盖旧模型）
+- **`data_upgrade.py` 处置**: 不修改、不删除——保留为独立工具（`python data_upgrade.py` 手动升级历史数据），不纳入 pipeline
+- **设计文档修订**: `Training_Pipeline_Integration_Analysis.md` + `ADR-P5.4` 更新为 2 步骤 pipeline（移除 data_upgrade 依赖）
+
+#### API
+- `BlackDragon.exe --pipeline`（frozen）/ `python launch.py --pipeline`（dev）— 一键清洗 + 训练
+- `--train` — 仅训练（向后兼容，不变）
+- Dashboard「模型训练」按钮 → `--pipeline` 全流程
+
+#### Design Decisions
+- 双进程架构保持（P5.3 / ADR-P5.2）——pipeline 仍是 Dashboard 单子进程，Overlay 不受影响
+- 不修改 P4 core（`src/core/`、`src/model/`、`src/data/recorder.py`）— 零 diff
+- TrainingPanel UI 零变更——PIPE 捕获自然显示两步骤输出
+- 数据安全：备份优先于覆盖（`.bak` 策略），训练失败不破坏旧模型
+
+#### Metrics
+- Tests: 559 → **569**（+10 net：新增 `tests/test_training_pipeline.py` 10 tests；修改 controller 2 个 frozen 断言 + launch +3）
+- 覆盖: pipeline 调用顺序、frozen/dev 命令、clean 失败优雅、train 失败不覆盖旧模型
+- P4 core 零 diff；Overlay 架构零 diff
+
+#### Review
+- 待 reviewer 审查；需重建 EXE（spec 已修改）使 frozen `--pipeline` 生效
+
+---
+
 ### 2026-08-04 — PyInstaller Frozen Support + v1.0 Release Candidate
 
 #### Phase

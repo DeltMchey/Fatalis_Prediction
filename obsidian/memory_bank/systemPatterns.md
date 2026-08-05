@@ -2,21 +2,25 @@
 
 ## Architecture Pattern
 
-**Pipeline Architecture** with file-system coupling between stages. No import dependencies between Python modules.
+**Dual-Process Architecture** (P5.3, ADR-P5.2) + pipeline data flow with file-system coupling between offline stages.
 
 ```
-Game Memory → ai_engine.py (live)
-                 │
-                 ├──► CSV files → data_cleaner.py → ML_Ready_Dataset.csv
-                 │                                      │
-                 │                                      ▼
-                 │                              train_lgbm.py → .pkl model
-                 │                                      │
-                 └──────────────────────────────────────┘
-                                        │
-                                   joblib.load()
-                                        │
-                                   ai_engine.py (inference)
+┌──────────────────────────────────────────────────────────────┐
+│ Process 1: python launch.py / BlackDragon.exe (Dashboard)    │
+│   └─ DPG event loop (Dashboard.run)                          │
+│       └─ GameService daemon → attach P4 modules              │
+│       └─ spawns Process 2 via subprocess                     │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ subprocess.Popen
+┌───────────────────────────▼──────────────────────────────────┐
+│ Process 2: python overlay.py / BlackDragonOverlay.exe        │
+│   └─ DPG event loop (OverlayUI.run) — independent context    │
+│       └─ MemoryReader → StateTracker → Predictor → Overlay   │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ (offline, via filesystem)
+                            ▼
+    CSV files → data_cleaner.py → ML_Ready_Dataset.csv
+              → train_lgbm.py → fatalis_ai_model.pkl → joblib.load
 ```
 
 ## Core Design Patterns
@@ -83,21 +87,35 @@ is_enraged   = 0 < enrage_timer < enrage_max
 
 [Training]   ML_Ready_Dataset.csv → LightGBM (6 features, multiclass) → .pkl model
 
+[Pipeline]   `launch.py --pipeline` = Cleaning → Training (一键流程)
+              Unknown actions (not in ACTION_DB) filtered with warning at both stages
+
 [Inference]  Live memory → 6 features → predict_proba() → filter → Top-3 → overlay
 ```
 
-## Thread Model
+## Process / Thread Model
 
 ```
-Thread 1 (daemon): data_logger_thread()
-  └─ Every 0.1s: read memory → compute → write CSV → append action_buffer
+Process 1: Dashboard (launch.py / BlackDragon.exe)
+  ├─ Main thread: dearpygui render loop (Dashboard.run) — status/log/training refresh
+  ├─ GameService daemon: 2s poll game process → attach/detach P4 modules
+  ├─ CombatRecorder daemon: 0.1s record frames → CSV (when attached)
+  ├─ (subprocess) BlackDragonOverlay.exe
+  └─ (subprocess) BlackDragon.exe --pipeline  ← v1.1: one-click clean+train (button triggered)
 
-Thread 0 (main): Ultimate_Radar_UI.run()
-  └─ dearpygui render loop: update_logic() every frame
-     └─ read memory → state update → AI prediction (every 0.5s) → render overlay
+Process 2: Overlay (overlay.py / BlackDragonOverlay.exe)
+  ├─ Main thread: dearpygui render loop (OverlayUI.run) — update_logic every frame
+  │    └─ read memory → state update → AI prediction (every 0.5s) → render overlay
+  └─ CombatRecorder daemon: 0.1s record frames → CSV
+
+Shared state (per-process, no cross-process IPC):
+  - state_tracker.is_recording (independent per process)
+  - action_buffer deque + lock (within process, recorder → UI)
+  - config: each process loads blackdragon_config.json independently
+  - CSV: each process writes independent files to data/
 ```
 
-Shared state: `shared_state` dict (no lock protection — known tech debt #5) and `action_buffer` deque (has lock).
+**Why dual-process**: DPG 2.x / GLFW requires window creation on the main thread only; one process cannot host two DPG contexts. Process isolation (ADR-P5.2) gives each its own DPG context + main thread.
 
 ## Key Constants
 

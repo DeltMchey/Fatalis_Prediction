@@ -142,6 +142,9 @@ def prepare_train_data(dataset_csv: Path, derived: bool, n_bins: int):
         "train_rows": int(len(train_df)),
         "holdout_rows": int(len(holdout_df)),
         "train_classes": int(y_train.nunique()),
+        # FLAML auto_augment 对分类任务 LabelEncoder 编码 y（xgboost 硬性要求
+        # [0,n) 标签）——提取物 classes_ 为编码值；P5 导出按此表还原原始标签
+        "train_labels": sorted(int(v) for v in y_train.unique()),
         "feature_run": {"derived": derived, "n_bins": n_bins},
         "feature_names": fb.get_feature_names_out(),
         "n_groups": int(pd.Series(groups).nunique()) if groups is not None else None,
@@ -232,6 +235,9 @@ def run_search(run_name: str, args, config: dict) -> dict:
     # 保存 fit 后的 FeatureBuilder（P5 导出复用同一实例，词表/分箱/频次表一致）
     import joblib
     joblib.dump(fb, out_dir / "feature_builder.pkl")
+    # 保存最优已训练模型（flaml wrapper，含 native estimator）——P5 导出的输入。
+    # 中间产物允许依赖 flaml；导出脚本负责提取纯原生对象。
+    joblib.dump(wrapper, out_dir / "automl_best.pkl")
 
     print(f"\n=== run {run_name} done ===")
     print(f"best_estimator={best_estimator}")

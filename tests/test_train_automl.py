@@ -80,6 +80,9 @@ class TestTrainAutomlSmoke:
 
         assert (run_dir / "best_config.json").exists()
         assert (run_dir / "flaml_log.csv").exists()
+        # P5 导出输入：fit 后 FeatureBuilder + 最优已训练模型（flaml wrapper）
+        assert (run_dir / "feature_builder.pkl").exists()
+        assert (run_dir / "automl_best.pkl").exists()
 
         import joblib
         fb = joblib.load(run_dir / "feature_builder.pkl")

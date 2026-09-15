@@ -83,7 +83,11 @@ def clean_combat_data():
                         'previous_action': last_mapped_action,  # 记录上一个是哪个合并招式
                         'phase': phase_val,
                         'is_enraged': enrage_val,
-                        'next_action': target_action
+                        'next_action': target_action,
+                        # P1(AutoML 实验): 会话来源标注——值=源战斗 CSV 文件名（不含路径）。
+                        # 纯增量列（放末位）：train_lgbm 显式选 6 特征列不受影响；
+                        # 用途 = StratifiedGroupKFold 分组 CV 对照（防泄漏稳健性检查）。
+                        'source_session': os.path.basename(file),
                     })
 
             last_row = row

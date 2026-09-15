@@ -316,13 +316,37 @@ class TestCorruptedCsv:
 
 class TestOutputFormat:
     def test_output_columns(self, pipeline_workdir):
-        """输出列顺序为 ML 就绪数据集 7 列标准顺序。"""
+        """输出列为 ML 就绪数据集标准顺序（7 原有列 + P1 新增 source_session 末位）。"""
         df = run_cleaner(pipeline_workdir, make_rows([37, 53]))
         assert df is not None
         assert df.columns.tolist() == [
             "distance", "relative_angle", "posture",
             "previous_action", "phase", "is_enraged", "next_action",
+            "source_session",
         ]
+
+    def test_source_session_column(self, pipeline_workdir):
+        """P1(AutoML 实验): source_session = 源战斗 CSV 文件名（不含路径）。
+
+        用途：StratifiedGroupKFold 分组 CV 对照（防泄漏稳健性检查）。
+        """
+        df = run_cleaner(pipeline_workdir, make_rows([37, 53]))
+        assert df is not None
+        assert (df["source_session"] == "fatalis_combat_data_raw.csv").all()
+
+    def test_source_session_distinguishes_files(self, pipeline_workdir):
+        """两个源 CSV → 各自转换对带各自 source_session 值。"""
+        data_dir = pipeline_workdir / "data"
+        write_combat_csv(data_dir / "fatalis_combat_data_a.csv", make_rows([37, 53]))
+        write_combat_csv(data_dir / "fatalis_combat_data_b.csv", make_rows([81, 129]))
+
+        data_cleaner.clean_combat_data()
+
+        df = pd.read_csv(data_dir / "ML_Ready_Dataset.csv")
+        sessions = set(df["source_session"])
+        assert sessions == {
+            "fatalis_combat_data_a.csv", "fatalis_combat_data_b.csv",
+        }
 
     def test_multiple_transitions_count(self, pipeline_workdir):
         """N 个不同动作 → N-1 个转换对（全为战斗动作时）。"""

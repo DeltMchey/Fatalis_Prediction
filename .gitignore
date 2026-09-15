@@ -15,6 +15,9 @@ __pycache__/
 *.swp
 *.swo
 
+# AutoML experiment artifacts (run outputs, reports, candidate models)
+experiments/
+
 # Generated data (large files)
 data/*.csv
 models/*.pkl

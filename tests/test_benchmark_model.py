@@ -242,6 +242,10 @@ class TestFullBenchmarkMain:
         for key in ("load_rss_delta_mb", "steady_rss_mb", "drift_mb_per_5min",
                     "model_file_mb"):
             assert key in report["memory"]
+        # runner 自报 RSS（venv 启动器存根问题修复后必须非空且量级合理）
+        assert report["memory"]["load_rss_delta_mb"] is not None
+        assert report["memory"]["steady_rss_mb"] is not None
+        assert report["memory"]["steady_rss_mb"] > 10  # python 进程基线远大于此
         assert np.isfinite(report["memory"]["drift_mb_per_5min"])
         assert report["memory"]["model_file_mb"] > 0
 

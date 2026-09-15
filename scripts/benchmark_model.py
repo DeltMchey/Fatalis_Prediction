@@ -198,11 +198,17 @@ def _runner_main(model_path, duration, cadence=0.5) -> int:
     """内存画像 runner（由父进程 spawn，事件经 stdout JSONL 上报）。
 
     事件序列：baseline（加载前 RSS）→ loaded（加载后 RSS + 加载耗时）
-    → tick（每 5s 心跳，含自报推理时延统计）→ done。
+    → tick（每 5s 心跳，含自报 RSS/CPU/推理时延统计）→ done。
+
+    设计说明（Windows 代码现实）：venv 的 python.exe 是启动器存根，真实
+    工作进程是其子进程——父进程按 pid 采 psutil 只能看到 4MB 存根。
+    因此 RSS/CPU 由 runner 进程内 psutil 自报（隔离子进程内部，psutil
+    调用开销 μs 级，不影响 0.5s 节奏的推理时延自报）。
     """
     import psutil
 
     proc = psutil.Process()
+    proc.cpu_percent(interval=None)  # 预热（首次调用恒 0）
 
     def emit(event, **kw):
         print(json.dumps({"event": event, **kw}), flush=True)
@@ -219,15 +225,19 @@ def _runner_main(model_path, duration, cadence=0.5) -> int:
     latencies = []
     start = time.perf_counter()
     last_tick = start
+    # 心跳间隔自适应：默认 5s；短时长（测试）按 duration/6 收缩保证有采样点
+    tick_interval = min(5.0, max(0.5, duration / 6.0))
     while time.perf_counter() - start < duration:
         t1 = time.perf_counter()
         predictor.predict(*_RUNNER_PROBE)
         latencies.append((time.perf_counter() - t1) * 1000.0)
         now = time.perf_counter()
-        if now - last_tick >= 5.0:
+        if now - last_tick >= tick_interval:
             lat = np.asarray(latencies[-50:]) if latencies else np.zeros(1)
             emit(
-                "tick", elapsed_s=now - start, rss_mb=proc.memory_info().rss / (1 << 20),
+                "tick", elapsed_s=now - start,
+                rss_mb=proc.memory_info().rss / (1 << 20),
+                cpu_percent=proc.cpu_percent(interval=None),
                 self_latency_mean_ms=float(lat.mean()),
             )
             last_tick = now
@@ -237,9 +247,7 @@ def _runner_main(model_path, duration, cadence=0.5) -> int:
 
 
 def run_memory_profile(model_path, duration=300, sample_interval=10.0) -> dict:
-    """父进程采样 runner 子进程的 RSS / CPU（psutil 开销与被测进程隔离）。"""
-    import psutil
-
+    """spawn 隔离子进程做稳态推理；RSS/CPU 曲线取 runner 自报 tick 事件。"""
     cmd = [
         sys.executable, str(Path(__file__).resolve()),
         "--_runner", "--model", str(model_path), "--duration", str(duration),
@@ -248,7 +256,6 @@ def run_memory_profile(model_path, duration=300, sample_interval=10.0) -> dict:
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace",
     )
-    ps = psutil.Process(proc.pid)
 
     events = {"lines": []}
 
@@ -261,28 +268,9 @@ def run_memory_profile(model_path, duration=300, sample_interval=10.0) -> dict:
     thread = threading.Thread(target=reader, daemon=True)
     thread.start()
 
-    loaded_seen = {"flag": False}
-    rss_samples = []   # (t_seconds, rss_mb) — loaded 之后开始计
-    cpu_samples = []
-    t_start = time.perf_counter()
-    deadline = t_start + duration + 120  # runner 卡死保护
+    deadline = time.perf_counter() + duration + 120  # runner 卡死保护
     while proc.poll() is None and time.perf_counter() < deadline:
         time.sleep(sample_interval)
-        try:
-            rss = ps.memory_info().rss / (1 << 20)
-            cpu = ps.cpu_percent(interval=None)
-        except psutil.Error:
-            break
-        for line in events["lines"]:
-            try:
-                ev = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if ev.get("event") == "loaded":
-                loaded_seen["flag"] = True
-        if loaded_seen["flag"]:
-            rss_samples.append((time.perf_counter() - t_start, rss))
-            cpu_samples.append(cpu)
     proc.wait(timeout=60)
     thread.join(timeout=10)
 
@@ -296,10 +284,16 @@ def run_memory_profile(model_path, duration=300, sample_interval=10.0) -> dict:
     for ev in parsed:
         by_event.setdefault(ev.get("event"), []).append(ev)
 
+    if "error" in by_event:
+        raise RuntimeError(f"runner 加载模型失败: {by_event['error'][0].get('message')}")
+
     baseline_rss = by_event["baseline"][0]["rss_mb"] if "baseline" in by_event else None
     loaded = by_event["loaded"][0] if "loaded" in by_event else None
     ticks = by_event.get("tick", [])
     self_lat = [t["self_latency_mean_ms"] for t in ticks if "self_latency_mean_ms" in t]
+
+    rss_samples = [(t["elapsed_s"], t["rss_mb"]) for t in ticks if "rss_mb" in t]
+    cpu_samples = [t["cpu_percent"] for t in ticks if "cpu_percent" in t]
 
     if len(rss_samples) >= 2:
         ts = np.array([t for t, _ in rss_samples])
@@ -321,6 +315,7 @@ def run_memory_profile(model_path, duration=300, sample_interval=10.0) -> dict:
         "drift_mb_per_5min": slope_mb_per_s * 300.0,
         "cpu_mean_percent": float(np.mean(cpu_samples)) if cpu_samples else None,
         "runner_self_latency_mean_ms": float(np.mean(self_lat)) if self_lat else None,
+        "n_ticks": len(ticks),
     }
 
 

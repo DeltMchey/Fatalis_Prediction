@@ -1,0 +1,43 @@
+{
+  "seed": 42,
+  "time_budget_s": 5400,
+  "estimator_list": ["lgbm", "xgboost", "rf", "extra_tree", "mlp"],
+  "n_splits": 5,
+  "eval_method": "cv",
+  "split_type": "stratified",
+  "holdout_size": 0.2,
+  "feature_runs": {
+    "A": {"derived": false, "n_bins": 8},
+    "B": {"derived": true, "n_bins": 8}
+  },
+  "custom_hp": {
+    "lgbm": {
+      "n_estimators": {"kind": "qlograndint", "lower": 30, "upper": 400, "q": 10, "init_value": 200, "low_cost_init_value": 60},
+      "num_leaves": {"kind": "qlograndint", "lower": 4, "upper": 127, "q": 4, "init_value": 31, "low_cost_init_value": 15},
+      "max_depth": {"kind": "qrandint", "lower": 2, "upper": 9, "q": 1, "init_value": 6, "low_cost_init_value": 4},
+      "class_weight": {"fixed": "balanced"}
+    },
+    "xgboost": {
+      "n_estimators": {"kind": "qlograndint", "lower": 30, "upper": 400, "q": 10, "init_value": 200, "low_cost_init_value": 60},
+      "max_depth": {"kind": "qrandint", "lower": 2, "upper": 8, "q": 1, "init_value": 6, "low_cost_init_value": 4}
+    },
+    "rf": {
+      "n_estimators": {"kind": "qlograndint", "lower": 20, "upper": 500, "q": 10, "init_value": 200, "low_cost_init_value": 50},
+      "max_depth": {"kind": "qrandint", "lower": 2, "upper": 16, "q": 1, "init_value": 8, "low_cost_init_value": 4},
+      "class_weight": {"fixed": "balanced"}
+    },
+    "extra_tree": {
+      "n_estimators": {"kind": "qlograndint", "lower": 20, "upper": 500, "q": 10, "init_value": 200, "low_cost_init_value": 50},
+      "max_depth": {"kind": "qrandint", "lower": 2, "upper": 16, "q": 1, "init_value": 8, "low_cost_init_value": 4},
+      "class_weight": {"fixed": "balanced"}
+    },
+    "mlp": {}
+  },
+  "mlp_constraints": {
+    "hidden_layer_max": [128, 64],
+    "max_iter_max": 500
+  },
+  "output_root": "experiments",
+  "retrain_full": true,
+  "_comment": "custom_hp 由 train_automl.py 的 build_custom_hp() 按 kind/fixed 解码为 flaml tune domain（JSON 无法直接存对象）。estimator 名为 flaml 2.6.0 实际键：extra_tree（非 extra_trees）、mlp（add_learner 注册名，域在 src/model/mlp_learner.py 内锁定）。超参上限：lgbm ≤400树/127叶/深9；xgb ≤400/深8；rf/et ≤500/深16。"
+}

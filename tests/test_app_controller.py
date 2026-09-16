@@ -182,6 +182,12 @@ class TestOverlaySubprocess:
 # =============================================================================
 
 class TestTraining:
+    @pytest.fixture(autouse=True)
+    def _isolate_train_log_dir(self, tmp_path, monkeypatch):
+        """v3(F5): 训练输出落盘有文件副作用——CWD 隔离到 tmp_path。"""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "models").mkdir(exist_ok=True)
+
     def test_start_training(self, deps, monkeypatch):
         import subprocess
         proc = MagicMock()
@@ -223,10 +229,12 @@ class TestTraining:
         # 队列已排空
         assert deps["controller"].get_training_output() == []
 
-    def test_start_training_frozen_uses_pipeline_flag(self, deps, monkeypatch):
+    def test_start_training_frozen_uses_pipeline_flag(self, deps, monkeypatch,
+                                                      tmp_path):
         """冻结模式: start_training 应使用 [exe, --pipeline] 而非 [exe, train_lgbm.py]。
 
         防止 BlackDragon.exe train_lgbm.py 重新启动 Dashboard。
+        伪 exe 路径用 tmp_path（v3/F5 起训练日志会向 exe 目录 mkdir 写文件）。
         """
         import subprocess
         import sys
@@ -235,12 +243,101 @@ class TestTraining:
         proc.stdout = ["line1\n"]
         monkeypatch.setattr(subprocess, "Popen", MagicMock(return_value=proc))
         monkeypatch.setattr(sys, "frozen", True, raising=False)
-        monkeypatch.setattr(sys, "executable", r"C:\dist\BlackDragon.exe")
+        fake_exe = tmp_path / "dist" / "BlackDragon.exe"
+        monkeypatch.setattr(sys, "executable", str(fake_exe))
 
         ok = deps["controller"].start_training()
         assert ok is True
         cmd = subprocess.Popen.call_args[0][0]
-        assert cmd == [r"C:\dist\BlackDragon.exe", "--pipeline"]
+        assert cmd == [str(fake_exe), "--pipeline"]
+
+
+# =============================================================================
+# 4a. v3(F5) 训练输出落盘（tee + 滚动清理）
+# =============================================================================
+
+class TestTrainingLogTee:
+    @pytest.fixture(autouse=True)
+    def _isolate_train_log_dir(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "models").mkdir(exist_ok=True)
+
+    def test_output_teed_to_log_file(self, deps, monkeypatch):
+        """训练 stdout 双路：UI 队列照常 + 完整落盘 models/train_*.log。"""
+        import subprocess
+        proc = MagicMock()
+        proc.poll.return_value = None
+        proc.stdout = ["line1\n", "line2\n", "📊 本次训练数据：X 会话\n"]
+        proc.wait.return_value = 0
+        monkeypatch.setattr(subprocess, "Popen", MagicMock(return_value=proc))
+
+        ctrl = deps["controller"]
+        assert ctrl.start_training() is True
+        ctrl._training_thread.join(timeout=5)
+
+        # UI 队列行为不变（含退出标记）
+        out = ctrl.get_training_output()
+        assert out[:3] == ["line1", "line2", "📊 本次训练数据：X 会话"]
+        assert out[-1] == "[训练结束] 退出码: 0"
+
+        # 落盘内容与 stdout 逐行一致
+        import glob
+        logs = glob.glob("models/train_*.log")
+        assert len(logs) == 1
+        with open(logs[0], encoding="utf-8") as f:
+            assert f.read() == "line1\nline2\n📊 本次训练数据：X 会话\n"
+
+    def test_tee_failure_does_not_break_ui_queue(self, deps, monkeypatch):
+        """日志文件 open 失败 → 训练照常启动，仅 UI 队列展示。"""
+        import subprocess
+        import src.app.controller as controller_mod
+        proc = MagicMock()
+        proc.poll.return_value = None
+        proc.stdout = ["line1\n"]
+        proc.wait.return_value = 0
+        monkeypatch.setattr(subprocess, "Popen", MagicMock(return_value=proc))
+        monkeypatch.setattr(
+            controller_mod, "resolve_runtime_path",
+            MagicMock(side_effect=OSError("disk full")))
+
+        ctrl = deps["controller"]
+        assert ctrl.start_training() is True
+        ctrl._training_thread.join(timeout=5)
+        assert ctrl._training_log_file is None
+        assert "line1" in ctrl.get_training_output()
+
+    def test_prune_train_logs_keeps_newest(self, tmp_path):
+        """滚动清理：12 份历史日志 → 仅保留最新 10 份；无关文件不动。"""
+        from src.app.controller import prune_train_logs
+        models = tmp_path / "models"
+        models.mkdir(exist_ok=True)
+        for i in range(1, 13):
+            (models / f"train_20260916_{i:06d}.log").write_text(f"v{i}")
+        (models / "fatalis_ai_model.pkl").write_bytes(b"m")
+        (models / "train_readme_notes.txt").write_text("not a log")
+
+        removed = prune_train_logs(models)
+
+        assert removed == 2
+        remaining = sorted(p.name for p in models.glob("train_*.log"))
+        assert len(remaining) == 10
+        assert remaining[0] == "train_20260916_000003.log"  # 最旧两份被删
+        assert remaining[-1] == "train_20260916_000012.log"
+        assert (models / "fatalis_ai_model.pkl").exists()
+        assert (models / "train_readme_notes.txt").exists()
+
+    def test_prune_train_logs_under_limit_noop(self, tmp_path):
+        """不足保留份数 → 零删除。"""
+        from src.app.controller import prune_train_logs
+        models = tmp_path / "models"
+        models.mkdir(exist_ok=True)
+        (models / "train_20260916_000001.log").write_text("v")
+        assert prune_train_logs(models) == 0
+        assert (models / "train_20260916_000001.log").exists()
+
+    def test_prune_train_logs_missing_dir(self, tmp_path):
+        from src.app.controller import prune_train_logs
+        assert prune_train_logs(tmp_path / "nope") == 0
 
 
 # =============================================================================

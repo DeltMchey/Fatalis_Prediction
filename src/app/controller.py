@@ -18,6 +18,7 @@ P5.3 双进程架构（ADR-P5.2）：
   - 可在 Linux CI import（无 dearpygui 依赖）
 """
 
+import datetime
 import logging
 import os
 import queue
@@ -30,6 +31,32 @@ from pathlib import Path
 from src.app.config import AppConfig, resolve_runtime_path
 
 logger = logging.getLogger("BlackDragon")
+
+# v3(F5): 训练输出落盘——文件名前缀与保留份数（滚动清理）
+TRAIN_LOG_PREFIX = "train_"
+TRAIN_LOG_KEEP = 10
+
+
+def prune_train_logs(models_dir, keep: int = TRAIN_LOG_KEEP) -> int:
+    """滚动清理训练日志：models/train_*.log 仅保留最新 keep 份。
+
+    按文件名排序（train_YYYYMMDD_HHMMSS.log 时间戳字典序 = 时间序）。
+
+    Returns:
+        int: 被删除的日志份数。
+    """
+    log_dir = Path(models_dir)
+    if not log_dir.is_dir():
+        return 0
+    logs = sorted(p for p in log_dir.glob(TRAIN_LOG_PREFIX + "*.log"))
+    removed = 0
+    for stale in logs[:-keep] if keep > 0 else logs:
+        try:
+            stale.unlink()
+            removed += 1
+        except OSError:
+            pass  # 单文件清理失败不影响其余滚动
+    return removed
 
 
 class AppController:
@@ -69,6 +96,9 @@ class AppController:
         self._training_proc = None
         self._training_queue: "queue.Queue[tuple]" = queue.Queue()
         self._training_thread = None
+        # v3(F5): 训练输出落盘文件句柄（tee；None = 落盘不可用，仅 UI 队列）
+        self._training_log_file = None
+        self._training_log_path: "Path | None" = None
 
     # ================= 游戏附着 / 分离 =================
 
@@ -302,11 +332,29 @@ class AppController:
             logger.error("启动训练失败", exc_info=True)
             return False
         self._training_queue = queue.Queue()
+        # v3(F5): 训练输出 tee 落盘 models/train_YYYYMMDD_HHMMSS.log
+        #（UI 队列行为不变；落盘失败不阻断训练——事后取证属增强能力）
+        self._training_log_path = None
+        self._training_log_file = None
+        try:
+            log_dir = resolve_runtime_path("models")
+            log_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            self._training_log_path = log_dir / f"{TRAIN_LOG_PREFIX}{stamp}.log"
+            self._training_log_file = open(
+                self._training_log_path, "w", encoding="utf-8",
+                errors="replace")
+        except Exception:
+            logger.error("训练日志文件创建失败（仅 UI 显示，不落盘）",
+                         exc_info=True)
+            self._training_log_path = None
+            self._training_log_file = None
         self._training_thread = threading.Thread(
             target=self._read_training_output, daemon=True
         )
         self._training_thread.start()
-        logger.info("训练已启动: %s", "launch.py --pipeline")
+        logger.info("训练已启动: %s（输出日志: %s）", "launch.py --pipeline",
+                    self._training_log_path)
         return True
 
     def cancel_training(self) -> bool:
@@ -355,10 +403,16 @@ class AppController:
     # ================= 内部：训练输出读取 =================
 
     def _read_training_output(self) -> None:
-        """后台线程：读取训练子进程 stdout → 推送队列。"""
+        """后台线程：读取训练子进程 stdout → 推送队列 + tee 落盘（v3/F5）。"""
         try:
             for line in self._training_proc.stdout:
                 self._training_queue.put(line.rstrip())
+                if self._training_log_file is not None:
+                    try:
+                        self._training_log_file.write(line)
+                        self._training_log_file.flush()
+                    except Exception:
+                        pass  # 落盘失败不影响 UI 展示
         except Exception:
             pass
         finally:
@@ -368,3 +422,17 @@ class AppController:
                 self._training_queue.put(f"[训练结束] 退出码: {code}")
             except Exception:
                 pass
+            # 关闭日志文件 + 滚动清理（保留最近 TRAIN_LOG_KEEP 份）
+            if self._training_log_file is not None:
+                try:
+                    self._training_log_file.close()
+                except Exception:
+                    pass
+                self._training_log_file = None
+            if self._training_log_path is not None:
+                try:
+                    removed = prune_train_logs(self._training_log_path.parent)
+                    if removed:
+                        logger.info("已滚动清理 %d 份历史训练日志", removed)
+                except Exception:
+                    pass

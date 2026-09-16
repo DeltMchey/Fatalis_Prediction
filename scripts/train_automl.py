@@ -190,6 +190,9 @@ def run_search(run_name: str, args, config: dict) -> dict:
         verbose=1 if args.smoke else 2,
         keep_search_state=True,
     )
+    if args.n_jobs is not None:
+        # FLAML 默认 n_jobs=-1（全核）；None 时不下发该键，保持既有行为
+        settings["n_jobs"] = args.n_jobs
     automl.fit(X_train, y_train, **settings)
 
     # ---- manifest（规划 P4 运行清单）----
@@ -202,7 +205,7 @@ def run_search(run_name: str, args, config: dict) -> dict:
         "config": config,
         "cli_args": {
             "time_budget": args.time_budget, "smoke": args.smoke,
-            "dataset": args.dataset,
+            "dataset": args.dataset, "n_jobs": args.n_jobs,
         },
         "data": meta,
         "best_estimator": best_estimator,
@@ -260,6 +263,12 @@ def main(argv=None) -> int:
                     help="小预算冒烟：验证管线跑通（不产正式结果）")
     ap.add_argument("--smoke-estimators", default="lgbm,rf",
                     help="冒烟模式使用的 estimator 子集（逗号分隔）")
+    ap.add_argument("--n-jobs", type=int, default=None,
+                    help="automl.fit 的 n_jobs：限制各 learner 训练线程。"
+                         "FLAML 默认 -1=全核（xgboost wrapper 转为 nthread=-1，"
+                         "运行时覆盖 OMP_NUM_THREADS 环境变量）。默认 None=不改"
+                         "变既有行为；Windows 全核 OpenMP 并行区有堆损坏风险"
+                         "（P6 Run B attempt1 0xC0000374），受限重试用 1")
     args = ap.parse_args(argv)
 
     config = json.loads(Path(args.config).read_text(encoding="utf-8"))

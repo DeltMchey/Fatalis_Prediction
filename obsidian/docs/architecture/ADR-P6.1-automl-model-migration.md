@@ -101,7 +101,9 @@ v3 事故（用户录 1 场新战斗点训练 → 出厂 19 会话/2444 行数�
 3. **出厂模型 `models/factory_model.pkl`**：随包分发的不可变回滚副本，训练/轮换机制永不触碰。**刻意不用 `.bak` 命名**：`.bak` 是运行时链的第一代，首次变更重训即被推进——"出厂"与"上一版本"不能共享一个槽位。包内同时分发原始战斗 CSV（~11MB）作为数据集重建保险。
 4. **训练守门与可观测**（`production_backend.py` + `controller.py`）：训练输出摘要行（本次 vs 上代会话/行/类）；破坏性变更门（数据集行数 < 上代 50%、holdout < 100 行、类数降 ≥20%）**只警告不阻塞**，写 sidecar `gate_warnings`；每次训练 tee 到 `models/train_YYYYMMDD_HHMMSS.log`（保留最近 10 份）。
 
-**回滚层级**（用户视角）：`factory_model.pkl`（出厂，任意时刻）→ `.bak`（上一代）→ `.bak2`（上上代）；数据集同理，或删 `ML_Ready_Dataset.csv*` 从随包原始 CSV 逐字节重建。
+> **Addendum（2026-09-16 用户裁决）——反转第 3 条"随包附带原始 CSV"一半**：v1.2.0 发行包 `data/` 只附带清洗后的 `ML_Ready_Dataset.csv`，19 个原始战斗 CSV（~11MB）不再随包（`build_exe.ps1` 原 5e 步打包逻辑移除）。**理由**：压缩包体积与发行物整洁优先。**影响**：放弃"数据集从零重建"能力（下文"从随包原始 CSV 逐字节重建"路径自此仅限含原始 CSV 的 dev 仓库）；**重训安全不受影响**——第 1 条 F1 合并语义保证无论原始 CSV 是否在场，`source_session` 不在磁盘的历史会话行都从现有数据集保留，"单场数据替换"事故不会复现（发行包形态边界已有测试锁定：`tests/test_data_cleaner.py::TestMergeSemantics::test_no_raw_csvs_shipped_dataset_untouched`）。出厂回滚仍由 `factory_model.pkl` + 数据集 `.bak`/`.bak2` 链完整保障。
+
+**回滚层级**（用户视角）：`factory_model.pkl`（出厂，任意时刻）→ `.bak`（上一代）→ `.bak2`（上上代）；数据集同理，或删 `ML_Ready_Dataset.csv*` 从原始 CSV 逐字节重建（仅限 dev 仓库——2026-09-16 起发行包不带原始 CSV，见上 Addendum）。
 
 ---
 

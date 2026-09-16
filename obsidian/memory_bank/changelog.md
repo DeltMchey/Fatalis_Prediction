@@ -4,6 +4,25 @@
 
 ---
 
+### 2026-09-16 — v1.2.0 发行修订：发行包去除原始战斗 CSV（用户裁决）
+
+#### Phase
+v1.2.0 Release Revision — package slimming（用户裁决：发行包只附带清洗数据集）
+
+#### Completed
+- `scripts/build_exe.ps1`：移除原 5e 步"原始战斗 CSV 随包"逻辑（fa6545e 引入的反转）；5b 数据集拷贝与 5d factory_model.pkl fail-fast 校验保留
+- 边界测试锁定发行包形态：`TestMergeSemantics::test_no_raw_csvs_shipped_dataset_untouched`——data/ 只有 ML_Ready_Dataset.csv 无原始 CSV 时，clean_combat_data() 优雅返回且数据集逐字节原样保留（实测无 bug，合并语义天然覆盖，767 tests 全过）
+- 重新打包：`Fatalis-Prediction-v1.2.0-windows.zip` 164,214,645 B（156.6 MiB，G6 PASS）；staging/zip data/ 仅 1 文件；包内双 EXE selftest exit 0
+- 文档对齐：Release_v1.2.0_Package_Report.md（修订注 + 新 SHA）、ADR-P6.1 F2 Addendum、README.md、techContext.md
+
+#### Design Decisions
+- 用户裁决（2026-09-16）：放弃"数据集从零重建"能力换发行物整洁；重训安全由 F1 合并语义保障（缺席会话行从现有数据集保留，单场录制无法替换出厂数据集）
+
+#### Metrics
+- zip 166,854,511 B → **164,214,645 B**（-2.5 MiB）；zip sha `fab5b5de…213a82`；数据集/模型 sha 与红线前后一致（`3e5ed34d…` / `ed3db5f8…` / `4d2344cf…`）
+
+---
+
 ### 2026-09-16 — P6.1 AutoML 模型迁移全程：FLAML 选型 → Run B 采纳 → 一键接入 → hotfix → v1.2.0 发版
 
 #### Phase

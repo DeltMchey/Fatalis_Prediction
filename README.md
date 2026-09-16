@@ -103,7 +103,7 @@ fatalis_ai_model.pkl + feature_importance.png + .meta.json（sidecar）
 | 上一代 | `models/fatalis_ai_model.pkl.bak` | 最近一次变更训练前的模型 |
 | 上上代 | `models/fatalis_ai_model.pkl.bak2` | 再上一次（两代轮换链） |
 
-数据集同理（`ML_Ready_Dataset.csv.bak` / `.bak2`）；也可删除数据集后由随包原始 CSV 逐字节重建。同数据重复训练产生逐位相同的模型，不会推进备份链（same-sha skip）。
+数据集同理（`ML_Ready_Dataset.csv.bak` / `.bak2`）。自 v1.2.0 起发行包仅附带清洗后的 `ML_Ready_Dataset.csv`，原始战斗 CSV 不随包（2026-09-16 用户裁决）：重训安全由清洗合并语义保障——不在场的会话行从现有数据集保留，单场录制无法替换出厂数据集。同数据重复训练产生逐位相同的模型，不会推进备份链（same-sha skip）。
 
 ## Documentation
 

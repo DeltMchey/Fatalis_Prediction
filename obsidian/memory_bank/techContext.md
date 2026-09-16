@@ -113,12 +113,12 @@ Enrage Struct:         +0x1BE30
 |------|---------|
 | `build/BlackDragon.spec` | PyInstaller spec — Dashboard EXE (xgboost.dll binaries + VERSION datas + factory_model.pkl + pickle-ref hiddenimports) |
 | `build/BlackDragonOverlay.spec` | PyInstaller spec — Overlay EXE (incl. `sklearn.pipeline` dynamic pickle reference) |
-| `scripts/build_exe.ps1` | One-click build (test → build → merge → surface model/data/factory/raw CSVs → **step 7: both EXEs `--selftest` hard gate**) |
+| `scripts/build_exe.ps1` | One-click build (test → build → merge → surface model/data/factory → **step 7: both EXEs `--selftest` hard gate**; raw CSVs NOT bundled since v1.2.0 per user ruling 2026-09-16) |
 
 ### Data Assets
 | File | Size | Description |
 |------|------|-------------|
-| `fatalis_combat_data_*.csv` (×19) | ~11 MB total | Raw recorded combat sessions (shipped in release as rebuild insurance) |
+| `fatalis_combat_data_*.csv` (×19) | ~11 MB total | Raw recorded combat sessions (NOT shipped since v1.2.0 — user ruling 2026-09-16; retrain safety guaranteed by cleaner merge semantics, historical sessions preserved from existing dataset) |
 | `ML_Ready_Dataset.csv` | ~86 KB | Cleaned transition pairs for training (with `source_session` provenance) |
 | `fatalis_ai_model.pkl` | ~7.5 MB | Production model — XGBoost pipeline `Pipeline[FeatureBuilder, LabelDecodedEstimator(XGBClassifier)]` (AutoML Run B) |
 | `factory_model.pkl` | ~7.5 MB | Immutable shipped-model copy (rollback target; never touched by training/rotation) |

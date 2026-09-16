@@ -5,6 +5,75 @@ All notable changes to the BlackDragon project.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.2.0] — 2026-09-16
+
+### Added (AutoML model migration — FLAML Run B)
+
+- **New AI model**: production model replaced by an XGBoost pipeline found via
+  FLAML AutoML (Run B: 12 derived features, 190 trees). Same game interface,
+  better predictions:
+  | Metric (holdout, 488 rows / 46 classes) | v1.1.0 (LightGBM) | v1.2.0 (XGBoost) |
+  |---|---|---|
+  | Top-1 accuracy | 27.05% | **32.58%** (+5.53pp) |
+  | Top-3 (raw) | 60.25% | **66.19%** (+5.94pp) |
+  | **Top-3 (hard-filtered, in-game metric)** | **58.81%** | **65.37%** (+6.56pp) |
+  | Model file size | 19.05 MB | **7.46 MB** |
+  - Inference stays single-threaded (~2% CPU, p95 4.31ms); startup memory
+    rises once by ~122 MB at model load (accepted user decision, steady-state
+    within budget).
+- **One-click training now uses the Run B winning config**: Dashboard
+  "Start Training" retrains XGBoost on your merged recordings in a few
+  seconds (previously LightGBM). `--train` keeps the legacy LightGBM path.
+- **Training data merge + backup protection** (v1.2 data safety):
+  - Your new recordings are merged with the shipped dataset — recording one
+    fight no longer silently replaces the shipped 19-session dataset.
+  - Two-generation backup chains (`.bak` / `.bak2`) for both dataset and
+    model; retraining with unchanged data no longer consumes the backup.
+  - Immutable factory model `models/factory_model.pkl` shipped for
+    one-step rollback to the release model; raw combat CSVs shipped so the
+    dataset can be rebuilt from scratch.
+  - Training prints a data summary line (sessions/rows/classes vs the
+    previous model) and prominent warnings on suspicious data shrinkage;
+    every run is logged to `models/train_YYYYMMDD_HHMMSS.log` (last 10 kept).
+- **`--selftest` diagnostic mode**: `BlackDragon.exe --selftest` /
+  `BlackDragonOverlay.exe --selftest` exercise path resolution → model load
+  → one prediction inside the real EXE and exit 0/1. Wired into the build
+  as a hard gate.
+
+### Fixed
+
+- **Overlay could show a blank AI area in frozen packages** (model-load
+  failures were silently swallowed, and relative paths broke when launched
+  from a different working directory). Frozen path resolution is now
+  exe-relative; load failures are logged with a full traceback and the
+  overlay shows an orange "⚠ AI 模型未加载" hint instead of blank space.
+- PyInstaller: Overlay EXE missing `sklearn.pipeline` (dynamic pickle
+  reference) and xgboost runtime (`xgboost.dll` + `VERSION`) now bundled.
+
+### Notes
+
+- Release package: `Fatalis-Prediction-v1.2.0-windows.zip` (see
+  `obsidian/docs/Release_v1.2.0_Package_Report.md` for contents + SHA256).
+- Architecture decision record: `obsidian/docs/architecture/ADR-P6.1-automl-model-migration.md`.
+- Tests: 581 → **766** passed.
+
+---
+
+## [v1.1.0] — 2026-08-05
+
+### Added (P5.4 — Training Pipeline + Frozen EXE)
+
+- One-click training pipeline: `launch.py --pipeline` / Dashboard button runs
+  `data_cleaner` → `train_lgbm` automatically; unknown-action and
+  small-dataset defenses (`stratify` fallback, NaN/non-numeric label warnings).
+- PyInstaller frozen distribution: `BlackDragon.exe` (Dashboard) +
+  `BlackDragonOverlay.exe` (Overlay) in one folder, model/dataset surfaced
+  next to the EXEs. Auto-start overlay + auto-record defaults (ADR-P5.3).
+- Release package `Fatalis-Prediction-v1.1.0-windows.zip`; docs: LICENSE,
+  CONTRIBUTING, SECURITY, package report. Tests: 551 → 581.
+
+---
+
 ## [v0.5.0-integration] — 2026-08-03
 
 ### Added (P4.6 — Integration)

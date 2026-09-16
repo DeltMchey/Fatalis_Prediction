@@ -244,3 +244,36 @@ FLAML AutoML 默认 n_jobs = -1（automl.py: settings["n_jobs"] = get("n_jobs", 
 3. 观察启动后首个预测出现的时延（模型加载 ~0.15s，进程内存稳态约 257MB）与游戏帧率无感知劣化（推理单线程、cpu ~2%）。
 4. 一键训练（--pipeline）仍走 LightGBM 旧管线，重训会覆盖预览包内模型（本包为预览件，无碍）；如需回到 Run B，重新解压即可。
 5. 回滚（如需）：`models/fatalis_ai_model.pkl.bak` 覆盖 `fatalis_ai_model.pkl`（仓库内 .bak 为基线；预览包内无 .bak，直接用旧 v1.1.0 包对比亦可）。
+
+## 10. P8 简报：Run B 配置接入一键训练管线 + runB-oneclick 预览包（2026-09-16）
+
+§9.5 第 4 条的遗留（一键训练仍走 LightGBM 旧管线）在本轮消除：Dashboard「开始训练」（`--pipeline`）现在用**用户自己的新数据**重训 **Run B 胜出配置**。
+
+### 10.1 架构与实现
+
+- **新模块 `src/model/production_backend.py`**：把 `p7_repro_runB.py` 验证过的复现链路提升为正式后端（正式代码零 experiments/ 运行时依赖）。链路 = `load_ml_dataset` → 分层切分(42) → `FeatureBuilder` 仅 fit 于 train_80（防泄漏红线）→ FLAML auto_augment 镜像（<20 稀有类整行复制，1949→2175）→ `shuffle(random_state=1)` → LabelEncoder → `XGBClassifier(RUNB_BEST_CONFIG + objective/enable_categorical/verbosity/n_jobs=1，不设 random_state)` → `LabelDecodedEstimator` 包装 → `Pipeline` → 写前 `.bak` 轮换 → joblib 产物 + gain 口径 12 列中文名特征图 + sidecar（`backend=runb_config`，含 config/dataset sha/日期/来源）。
+- **路由**：`launch.py --pipeline` 改为 `clean_combat_data() → train_runb_backend()`（2 行 diff）；`--train` 保留 legacy `train_lgbm` 路径（其 12 个测试不动）。`controller.py`/Dashboard 零改动（仍拉起 `--pipeline`）。spec hiddenimports 增 `src.model.production_backend`（lightgbm 因 `--train` 保留）。
+- **采纳入口关系不变**：`export_model.py`（物理隔离）与 `adopt_model.py`（显式采纳）仍是 AutoML 候选→生产的路径；`production_backend` 承接的是 train_lgbm 的"一键训练写生产"角色，写前轮换机制一致。
+
+### 10.2 验证结果（全部沙箱/解包副本，真生产模型零触碰，任务前后 sha 核对一致）
+
+| 验证项 | 结果 |
+|---|---|
+| 单元测试 | 新增 `tests/test_production_backend.py` 14 个（augment 镜像行数/分布、泄漏防护断言、产物结构 [FeatureBuilder, LabelDecodedEstimator(XGBClassifier n_jobs=1)]、sidecar、确定性、失败路径、ActionPredictor 契约）；全量 707 passed（构建门禁再跑一次 707 passed） |
+| 沙箱 E2E（dev） | `experiments/sandbox_onelick/` 两次完整 `--pipeline`：指标 32.58% / Top-3 66.19%（与正式报告一致）；两次运行 predict_proba 逐位一致；**沙箱重训模型 vs 现行采纳模型逐位一致（488 行留出集 max_abs_diff=0.0）**；全程 3.7s（fit 1.83s） |
+| 冻结 `--pipeline` 冒烟 | 解包副本上 `BlackDragon.exe --pipeline` 退出码 0、指标同上、耗时 4.65s；**冻结重训产物文件 sha 与开发模式重训完全相同**（`9c73cd71…`，文件级跨环境确定性） |
+| 双 EXE 冒烟 | Dashboard 10s 存活并自动拉起 1 个 Overlay 子进程，干净退出 |
+| 冻结推理探针 | 一次性探针 EXE（同 xgboost 收集面）对发行模型/冻结重训/开发重训三个模型全部 PROBE_OK，top1 全精度 hex `0x1.7506600000000p-2`（0.36428213…，与 §9.3 P7 探针基线一致） |
+
+### 10.3 打包
+
+- 预览包：`release/Fatalis-Prediction-runB-oneclick-preview.zip` = **154.7MB**（G6 ≤300MB **PASS**；上版 Run B 预览包 162.2MB，差异来自压缩器口径）。内含双 EXE、Run B 生产模型（sha 与采纳时一致）、`data/ML_Ready_Dataset.csv`、xgboost.dll + VERSION、新 README（说明一键训练语义与回滚方法）。
+- dist 未压缩 286MB（与上版持平）。
+
+### 10.4 用户实测指引（本版差异）
+
+1. 解压 `release/Fatalis-Prediction-runB-oneclick-preview.zip` 到任意目录（无需 Python）。
+2. **与上一版预览包的唯一行为差异**：在游戏里录制若干场黑龙后点 Dashboard「开始训练」，现在会用你的数据以 Run B 配置重训 xgboost 模型（几秒完成、单线程无 CPU 尖峰），日志面板会打印 `🚀 正在训练 XGBoost (Run B 胜出配置)...` 与 Top-3 指标；重启后生效。
+3. 验证一键训练生效：训练后 `models/fatalis_ai_model.pkl.meta.json` 的 `backend` 字段应为 `runb_config`；`models/feature_importance.png` 变为 12 特材 gain 条形图。
+4. 出厂模型即 Run B（与上版预览包相同）：不训练直接玩，预测行为与上版完全一致（同模型文件）。
+5. 回滚：`models/fatalis_ai_model.pkl.bak`（训练前的旧模型）覆盖回 `fatalis_ai_model.pkl`；或重新解压。

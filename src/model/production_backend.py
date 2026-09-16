@@ -26,7 +26,6 @@ ActionPredictor 零改动加载（joblib.load → predict_proba）。
 """
 
 import datetime
-import hashlib
 import json
 import os
 import platform
@@ -40,6 +39,11 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils import shuffle as sklearn_shuffle
 
+from src.core.backup_chain import (
+    ROTATED,
+    promote_with_backup,
+    sha256_file as _sha256_file,
+)
 from src.logging_config import setup_logging
 
 logger = setup_logging()
@@ -76,6 +80,12 @@ RUNB_FEATURE_RUN: dict = {"derived": True, "n_bins": 8}
 FLAML_RANDOM_SEED = 1        # flaml.config.RANDOM_SEED（数据准备 shuffle 用）
 RARE_CLASS_THRESHOLD = 20    # flaml generic_task.prepare_data auto_augment 阈值
 HOLDOUT_RANDOM_STATE = 42    # 与 train_lgbm / golden 索引测试一致
+
+# v3(F4) 训练守门阈值（只告警不阻断——用户可能就是想在小数据上试，
+# 但数据量骤减必须被看见；告警同时写入 sidecar 的 gate_warnings）
+GATE_MIN_ROWS_RATIO = 0.5     # 新数据集行数低于原模型的 50% → 告警
+GATE_MIN_HOLDOUT_ROWS = 100   # 留出集 <100 行 → 指标精度告警
+GATE_CLASS_DROP_RATIO = 0.2   # 类别数较原模型下降 ≥20% → 告警
 
 # 产物路径（相对 CWD；与 train_lgbm.py 同口径）
 DEFAULT_DATASET_CSV = "data/ML_Ready_Dataset.csv"
@@ -168,12 +178,7 @@ def build_runb_estimator():
     return XGBClassifier(**params)
 
 
-def _sha256_file(path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+# _sha256_file 由 src.core.backup_chain 导入（v3 起共享实现，旧名保留供调用方）
 
 
 # ================== 特征重要性图 ==================
@@ -222,7 +227,60 @@ def _plot_feature_importance(estimator, feature_names: list, out_path) -> None:
     plt.close(plt.gcf())
 
 
-# ================== 主入口 ==================
+# ================== 主入口 =================
+
+def _load_previous_stats(models_dir) -> dict | None:
+    """读取现有 sidecar 的上一版训练数据规模（F4 守门对照基准）。
+
+    Returns:
+        {"rows": int|None, "sessions": int|None, "classes": int|None}；
+        sidecar 缺失/损坏/字段缺失 → 对应项 None（首训/旧版 sidecar 场景）。
+    """
+    try:
+        data = json.loads(
+            (Path(models_dir) / SIDECAR_NAME).read_text(encoding="utf-8"))
+        d = data.get("data", {})
+        return {
+            "rows": d.get("dataset_rows"),
+            "sessions": d.get("train_sessions"),
+            "classes": data.get("n_classes"),
+        }
+    except Exception:
+        return None
+
+
+def evaluate_gates(new_rows: int, new_classes: int, holdout_rows: int,
+                   prev: dict | None) -> list[str]:
+    """v3(F4) 破坏性变化守门——返回告警消息列表（不阻断训练）。
+
+    规则（任一命中即一条告警；prev 缺失项跳过对应规则）：
+      1. 新数据集行数 < 原模型的 GATE_MIN_ROWS_RATIO（50%）
+      2. 留出集 < GATE_MIN_HOLDOUT_ROWS 行（指标百分比不可当精确值）
+      3. 类别数较原模型下降 ≥ GATE_CLASS_DROP_RATIO（20%）
+    """
+    warnings: list[str] = []
+    prev = prev or {}
+    prev_rows = prev.get("rows")
+    prev_classes = prev.get("classes")
+    if isinstance(prev_rows, (int, float)) and prev_rows > 0 \
+            and new_rows < GATE_MIN_ROWS_RATIO * prev_rows:
+        warnings.append(
+            f"新数据集仅 {new_rows} 行，不足原模型训练数据（{int(prev_rows)} 行）"
+            f"的 {int(GATE_MIN_ROWS_RATIO * 100)}% —— 若非有意精简数据，请检查"
+            " data/ 目录战斗 CSV 是否齐全（数据清洗已保留历史会话，见上方合并日志）")
+    if holdout_rows < GATE_MIN_HOLDOUT_ROWS:
+        warnings.append(
+            f"留出集仅 {holdout_rows} 行：本次 Accuracy/Top-3 百分比随机波动"
+            "很大，仅供趋势参考，请勿当精确指标解读")
+    if isinstance(prev_classes, (int, float)) and prev_classes > 0 \
+            and new_classes < prev_classes \
+            and (prev_classes - new_classes) / prev_classes >= GATE_CLASS_DROP_RATIO:
+        warnings.append(
+            f"动作类别数从 {int(prev_classes)} 降至 {new_classes}"
+            f"（降幅 ≥{int(GATE_CLASS_DROP_RATIO * 100)}%）—— 训练数据多样性"
+            "明显缩水，若非有意请检查数据来源")
+    return warnings
+
 
 def train_runb_backend(dataset_csv=DEFAULT_DATASET_CSV,
                        models_dir=DEFAULT_MODELS_DIR) -> dict | None:
@@ -241,7 +299,8 @@ def train_runb_backend(dataset_csv=DEFAULT_DATASET_CSV,
         成功: 摘要 dict（指标/路径/耗时/sidecar）；失败/跳过: None
     """
     from src.model.dataset import (
-        EmptyDatasetError, LABEL_COL, load_ml_dataset, make_holdout_split,
+        EmptyDatasetError, LABEL_COL, SOURCE_SESSION_COL, load_ml_dataset,
+        make_holdout_split,
     )
     from src.model.features import FeatureBuilder
     from src.model.label_decode import LabelDecodedEstimator
@@ -263,6 +322,17 @@ def train_runb_backend(dataset_csv=DEFAULT_DATASET_CSV,
         logger.error("读取 %s 失败", dataset_csv)
         print(f"❌ 读取 {dataset_csv} 失败！")
         return None
+
+    # ---- v3(F4): 本次训练数据统计（摘要行 + 守门基准）----
+    n_rows = int(len(df))
+    n_classes = int(df[LABEL_COL].nunique())
+    if SOURCE_SESSION_COL in df.columns:
+        n_sessions = int(df[SOURCE_SESSION_COL].nunique())
+        sessions_desc = f"{n_sessions} 会话"
+    else:
+        n_sessions = None
+        sessions_desc = "未知会话数（无 source_session 列）"
+    prev_stats = _load_previous_stats(models_dir)
 
     # ---- 切分 + 特征（FeatureBuilder 只在 train_80 上 fit——防泄漏红线）----
     train_df, test_df = make_holdout_split(
@@ -298,16 +368,37 @@ def train_runb_backend(dataset_csv=DEFAULT_DATASET_CSV,
     print(f"\n🏆 绝对准确率 (Accuracy): {accuracy * 100:.2f}%")
     print(f"🌟 实战黄金指标：Top-3 命中率: {top3 * 100:.2f}%")
 
-    # ---- 写产物：写前 .bak 轮换（与 train_lgbm 同机制，单代）----
+    # ---- v3(F4): 数据摘要行 + 破坏性变化守门（只告警不阻断）----
+    prev_sessions = prev_stats.get("sessions") if prev_stats else None
+    prev_rows = prev_stats.get("rows") if prev_stats else None
+    if isinstance(prev_rows, int):
+        prev_desc = (f"{prev_sessions if isinstance(prev_sessions, int) else '?'}"
+                     f" 会话 / {prev_rows} 行")
+    else:
+        prev_desc = "首次训练，无历史记录"
+    print(f"📊 本次训练数据：{sessions_desc} / {n_rows} 行 / {n_classes} 类"
+          f"（原模型：{prev_desc}）")
+    gate_warnings = evaluate_gates(n_rows, n_classes, int(len(test_df)),
+                                   prev_stats)
+    for warning in gate_warnings:
+        print(f"⚠️ {warning}")
+
+    # ---- 写产物：tmp 原子晋升 + 两代备份链 + 同 sha 跳过（v3/F3）----
+    # 同数据二次训练（确定性 → 新旧模型 sha 相同）不再推进备份链，
+    # 出厂备份 / models/factory_model.pkl 不会被自吞。
     models_dir = Path(models_dir)
     models_dir.mkdir(parents=True, exist_ok=True)
     model_path = models_dir / PRODUCTION_MODEL_NAME
     backup_path = models_dir / BACKUP_MODEL_NAME
-    rotated = False
-    if model_path.exists():
-        os.replace(model_path, backup_path)
-        rotated = True
-    joblib.dump(pipeline, model_path)
+    tmp_model_path = models_dir / (PRODUCTION_MODEL_NAME + ".tmp")
+    try:
+        joblib.dump(pipeline, tmp_model_path)
+        rotation_status = promote_with_backup(tmp_model_path, model_path,
+                                              generations=2)
+    finally:
+        if tmp_model_path.exists():
+            tmp_model_path.unlink()  # 异常路径残留清理（晋升成功时已移走）
+    rotated = rotation_status == ROTATED
     print(f"💾 模型已保存至: {model_path}")
 
     # ---- 特征重要性图（gain 口径，12 列中文名）----
@@ -325,9 +416,13 @@ def train_runb_backend(dataset_csv=DEFAULT_DATASET_CSV,
         "config": {**RUNB_BEST_CONFIG, **RUNB_FIXED_EXTRA_PARAMS},
         "feature_run": dict(RUNB_FEATURE_RUN),
         "n_classes": len(train_labels),
+        "gate_warnings": gate_warnings,
         "data": {
             "dataset_path": str(dataset_csv),
             "dataset_sha256": _sha256_file(dataset_csv),
+            "dataset_rows": n_rows,
+            "dataset_classes": n_classes,
+            "train_sessions": n_sessions,
             "train_rows_raw": int(len(X_train)),
             "train_rows_after_augment": int(len(X_prep)),
             "rare_classes_augmented": int(rare_classes),
@@ -346,7 +441,8 @@ def train_runb_backend(dataset_csv=DEFAULT_DATASET_CSV,
                 "Run B best_config（experiments/automl_20260915/p6_runB），"
                 "复现口径经 p7_repro_runB 逐位验证（max_abs_diff=0.0）"),
         },
-        "rollback": {"backup": str(backup_path), "rotated": rotated},
+        "rollback": {"backup": str(backup_path), "rotated": rotated,
+                     "rotation_status": rotation_status},
         "fit_seconds": round(fit_seconds, 2),
         "env": {
             "python": platform.python_version(),

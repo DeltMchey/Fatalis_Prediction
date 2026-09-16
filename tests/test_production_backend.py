@@ -174,6 +174,153 @@ class TestEndToEndArtifacts:
 
 
 # =============================================================================
+# 2b. v3(F3) 备份链加固：两代链 + 同 sha 跳过（防二次训练自吞出厂备份）
+# =============================================================================
+
+class TestBackupChainHardening:
+    def test_same_data_retrain_does_not_eat_backup(self, pipeline_workdir):
+        """事故时序复刻：出厂模型 → 用户训练 → 数据未变再训练。
+
+        第二次训练（确定性 → 新旧模型 sha 相同）必须跳过轮换，
+        .bak 仍指向出厂数据训出的第一版模型。
+        """
+        models = pipeline_workdir / "models"
+        write_mini_dataset(pipeline_workdir, make_mini_dataset(seed=1))
+        pb.train_runb_backend()
+        v1 = (models / "fatalis_ai_model.pkl").read_bytes()
+        assert not (models / "fatalis_ai_model.pkl.bak").exists()
+
+        # 数据未变，再次训练（用户"又点了一次开始训练"）
+        result = pb.train_runb_backend()
+        assert result["rollback"]["rotation_status"] == "skipped_same_sha"
+        assert result["rollback"]["rotated"] is False
+        assert (models / "fatalis_ai_model.pkl").read_bytes() == v1
+        assert not (models / "fatalis_ai_model.pkl.bak").exists()
+        assert not (models / "fatalis_ai_model.pkl.bak2").exists()
+
+    def test_incident_timeline_backup_survives(self, pipeline_workdir):
+        """完整事故时序：出厂 → 新数据训练(.bak=v1) → 同数据重训(.bak 不动)。"""
+        models = pipeline_workdir / "models"
+        write_mini_dataset(pipeline_workdir, make_mini_dataset(seed=1))
+        pb.train_runb_backend()
+        v1 = (models / "fatalis_ai_model.pkl").read_bytes()
+
+        # 用户录制新数据后训练（数据变化 → 正常轮换）
+        write_mini_dataset(pipeline_workdir, make_mini_dataset(seed=2, classes=[37, 53, 81, 129, 96]))
+        pb.train_runb_backend()
+        assert (models / "fatalis_ai_model.pkl.bak").read_bytes() == v1
+
+        # 数据未变再点一次训练 → .bak 必须仍是 v1（自吞防护）
+        pb.train_runb_backend()
+        assert (models / "fatalis_ai_model.pkl.bak").read_bytes() == v1
+
+    def test_two_generation_chain_progression(self, pipeline_workdir):
+        """数据连续两变 → .bak=上一版, .bak2=上上版（两代链）。"""
+        models = pipeline_workdir / "models"
+        write_mini_dataset(pipeline_workdir, make_mini_dataset(seed=1))
+        pb.train_runb_backend()
+        v1 = (models / "fatalis_ai_model.pkl").read_bytes()
+
+        write_mini_dataset(pipeline_workdir, make_mini_dataset(seed=2))
+        pb.train_runb_backend()
+        v2 = (models / "fatalis_ai_model.pkl").read_bytes()
+        assert v1 != v2
+        assert (models / "fatalis_ai_model.pkl.bak").read_bytes() == v1
+
+        write_mini_dataset(pipeline_workdir, make_mini_dataset(seed=3))
+        pb.train_runb_backend()
+        assert (models / "fatalis_ai_model.pkl.bak").read_bytes() == v2
+        assert (models / "fatalis_ai_model.pkl.bak2").read_bytes() == v1
+
+
+# =============================================================================
+# 2c. v3(F4) 训练守门与数据摘要
+# =============================================================================
+
+class TestEvaluateGates:
+    def test_no_warnings_on_healthy_growth(self):
+        """数据增长/持平 + 留出集充足 + 类别不降 → 无告警。"""
+        prev = {"rows": 2444, "sessions": 19, "classes": 46}
+        assert pb.evaluate_gates(2608, 46, 522, prev) == []
+
+    def test_rows_below_half_warns(self):
+        prev = {"rows": 2444, "sessions": 19, "classes": 46}
+        warns = pb.evaluate_gates(164, 24, 33, prev)
+        assert any("不足原模型训练数据" in w and "50%" in w for w in warns)
+
+    def test_small_holdout_warns(self):
+        """29 行留出集 → 指标精度告警（事故场景：20.69% 被当精确值）。"""
+        warns = pb.evaluate_gates(2444, 46, 29, None)
+        assert any("留出集仅 29 行" in w for w in warns)
+
+    def test_class_drop_warns(self):
+        prev = {"rows": 2444, "classes": 46}
+        warns = pb.evaluate_gates(2444, 24, 489, prev)
+        assert any("类别数从 46 降至 24" in w for w in warns)
+
+    def test_small_class_drop_no_warning(self):
+        """类别数小降（<20%）不告警。"""
+        prev = {"rows": 2444, "classes": 46}
+        warns = pb.evaluate_gates(2444, 40, 489, prev)
+        assert not any("类别数" in w for w in warns)
+
+    def test_class_increase_no_warning(self):
+        prev = {"rows": 2444, "classes": 46}
+        assert not any("类别数" in w
+                       for w in pb.evaluate_gates(2608, 51, 522, prev))
+
+    def test_none_prev_only_holdout_rule_active(self):
+        """首训（无 prev）→ 仅留出集规则可触发。"""
+        assert pb.evaluate_gates(5000, 50, 1000, None) == []
+        assert len(pb.evaluate_gates(5000, 50, 99, None)) == 1
+
+    def test_boundary_exactly_half_no_warn(self):
+        """恰 50%（不小于）→ 不触发行数告警。"""
+        prev = {"rows": 200, "classes": 10}
+        assert not any("不足原模型" in w
+                       for w in pb.evaluate_gates(100, 10, 40, prev))
+
+
+class TestSummaryAndGateSidecar:
+    def test_summary_line_and_sidecar_fields(self, pipeline_workdir, capsys):
+        """训练完成输出数据摘要行；sidecar 记录 dataset_rows/classes/sessions。"""
+        write_mini_dataset(pipeline_workdir, make_mini_dataset())
+        result = pb.train_runb_backend()
+
+        captured = capsys.readouterr()
+        assert "📊 本次训练数据：" in captured.out
+        assert "首次训练，无历史记录" in captured.out
+
+        data = result["data"]
+        assert data["dataset_rows"] >= data["train_rows_raw"]  # 全量 ≥ train_80
+        assert isinstance(data["dataset_classes"], int)
+        assert "gate_warnings" in result
+        assert result["n_classes"] == data["dataset_classes"]
+
+    def test_second_train_shows_previous_model_stats(self, pipeline_workdir,
+                                                    capsys):
+        """二次训练摘要行含上一版（原模型）规模（读旧 sidecar）。"""
+        write_mini_dataset(pipeline_workdir, make_mini_dataset(seed=1))
+        pb.train_runb_backend()
+        first_rows = pb.train_runb_backend()["data"]["dataset_rows"]
+
+        write_mini_dataset(pipeline_workdir, make_mini_dataset(seed=2))
+        capsys.readouterr()
+        pb.train_runb_backend()
+
+        captured = capsys.readouterr()
+        assert f"（原模型：" in captured.out or "原模型" in captured.out
+        assert str(first_rows) in captured.out
+
+    def test_gate_warnings_recorded_in_sidecar(self, pipeline_workdir):
+        """mini 数据集留出集 <100 行 → sidecar gate_warnings 非空且同步打印。"""
+        write_mini_dataset(pipeline_workdir, make_mini_dataset())
+        result = pb.train_runb_backend()
+
+        assert any("留出集" in w for w in result["gate_warnings"])
+
+
+# =============================================================================
 # 3. 泄漏防护：FeatureBuilder 仅在 train_80 上 fit
 # =============================================================================
 

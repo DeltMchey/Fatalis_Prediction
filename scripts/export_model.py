@@ -133,8 +133,26 @@ def _native_family_constructors():
         from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
 
         def _sig_params(cls):
+            """构造参数白名单；纯 kwargs 转发构造器返回 None（透传模式）。
+
+            两种 **kwargs 形态必须区分：
+            - xgboost sklearn 包装：签名只有 (objective, **kwargs)，booster
+              参数全部经 kwargs 转发——按签名过滤会把 best_config 全部丢弃
+              （静默训练默认配置模型），须走透传分支；
+            - lgbm/rf 等：签名显式枚举模型参数 + 尾部 **kwargs 接收别名，
+              白名单过滤仍然有效。
+            判据：签名除 self/objective 外无显式参数 → 透传。
+            """
             sig = inspect.signature(cls.__init__).parameters
-            return {"class_weight", "n_jobs", "random_state"} | set(sig.keys())
+            explicit = {
+                k for k, p in sig.items()
+                if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                              inspect.Parameter.KEYWORD_ONLY)
+                and k != "self"
+            }
+            if not explicit - {"objective"}:
+                return None
+            return {"class_weight", "n_jobs", "random_state"} | explicit
 
         _NATIVE_FAMILIES = {
             "lgbm": (lgb.LGBMClassifier, _sig_params(lgb.LGBMClassifier)),
@@ -148,7 +166,10 @@ def _native_family_constructors():
 def retrain_native(estimator_family: str, best_config: dict, X_train, y_train):
     """备选路径（R-08）：best_config → 原生 API 确定性重训（seed=42, n_jobs=1）。
 
-    配置映射保守处理：只保留目标类构造签名内的参数；flaml 特有键丢弃
+    配置映射保守处理：显式签名构造器（lgbm/rf/extra_tree）只保留签名内
+    参数；**kwargs 构造器（xgboost sklearn 包装）走透传分支并镜像 FLAML
+    config2params 的注入项（objective/enable_categorical/verbosity），
+    保证重训产物与 FLAML 重训等价。flaml 特有键丢弃
     （FLAML_sample_size / max_leaves→num_leaves 换算 lgbm 家族）。
     mlp 家族的重训走 wrapper（build 后 fit），此处不支持（提取路径必然纯净）。
     """
@@ -161,7 +182,14 @@ def retrain_native(estimator_family: str, best_config: dict, X_train, y_train):
     config.pop("FLAML_sample_size", None)
     if estimator_family == "lgbm" and "max_leaves" in config and "num_leaves" not in config:
         config["num_leaves"] = config.pop("max_leaves")
-    params = {k: v for k, v in config.items() if k in allowed}
+    if allowed is None:
+        # 纯 kwargs 转发构造器（xgboost sklearn 包装）：booster 参数透传
+        # + FLAML config2params 注入项（objective/enable_categorical/verbosity）
+        config.update(objective="multi:softprob", enable_categorical=True,
+                      verbosity=0)
+        params = config
+    else:
+        params = {k: v for k, v in config.items() if k in allowed}
     params["random_state"] = 42
     params["n_jobs"] = 1
     model = cls(**params)

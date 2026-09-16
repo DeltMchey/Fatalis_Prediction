@@ -346,6 +346,72 @@ class TestLabelDecoding:
 
 
 # =============================================================================
+# 6c. 确定性重训备选路径（R-08）参数映射回归
+# =============================================================================
+
+class TestRetrainNative:
+    """retrain_native 参数映射（xgboost **kwargs 透传修复的回归锁）。
+
+    修复背景：XGBClassifier.__init__ 签名为 (objective, **kwargs)，
+    按显式签名过滤会把 best_config 全部丢弃 → 静默训练默认配置模型。
+    """
+
+    def _mini_xy(self, rows_per_class=20):
+        """mini 数据集：y 经 LabelEncoder 编码（镜像 FLAML 现实，xgboost 硬性要求 [0,n)）。"""
+        df = make_mini_dataset(rows_per_class=rows_per_class)
+        X = FeatureBuilder().fit_transform(df)
+        y_enc = LabelEncoder().fit_transform(df["next_action"])
+        return X, y_enc
+
+    def test_xgboost_config_passthrough(self):
+        """xgboost：best_config 必须全部生效（修复前 n_estimators 被滤成默认 100）。"""
+        X, y = self._mini_xy(rows_per_class=30)
+        best_config = {
+            "n_estimators": 15, "max_depth": 3, "max_leaves": 4,
+            "learning_rate": 0.3, "subsample": 0.8, "colsample_bytree": 0.8,
+            "min_child_weight": 1.0, "reg_alpha": 0.0, "reg_lambda": 1.0,
+            "colsample_bylevel": 1.0,
+        }
+        est = export_model.retrain_native("xgboost", best_config, X, y)
+        assert est.n_estimators == 15
+        assert est.max_depth == 3
+        assert est.max_leaves == 4
+        assert est.subsample == 0.8
+        assert est.colsample_bytree == 0.8
+        # FLAML config2params 镜像注入项
+        assert est.objective == "multi:softprob"
+        assert est.enable_categorical is True
+        assert est.n_jobs == 1
+        assert est.random_state == 42
+
+    def test_xgboost_flaml_sample_size_dropped(self):
+        X, y = self._mini_xy()
+        est = export_model.retrain_native(
+            "xgboost", {"n_estimators": 12, "FLAML_sample_size": 500}, X, y)
+        assert est.n_estimators == 12
+        assert "FLAML_sample_size" not in est.get_xgb_params()
+
+    def test_lgbm_max_leaves_converted(self):
+        X, y = self._mini_xy()
+        est = export_model.retrain_native(
+            "lgbm", {"n_estimators": 12, "max_leaves": 7}, X, y)
+        assert est.num_leaves == 7
+
+    def test_rf_signature_filter_unchanged(self):
+        """显式签名构造器（rf）保持白名单过滤行为。"""
+        X, y = self._mini_xy()
+        est = export_model.retrain_native(
+            "rf", {"n_estimators": 12, "not_a_real_param": 1}, X, y)
+        assert est.n_estimators == 12
+        assert not hasattr(est, "not_a_real_param")
+
+    def test_mlp_rejected(self):
+        X, y = self._mini_xy()
+        with pytest.raises(ValueError, match="不支持"):
+            export_model.retrain_native("mlp", {}, X, y)
+
+
+# =============================================================================
 # 6. 提取契约 + 端到端导出（integration）
 # =============================================================================
 

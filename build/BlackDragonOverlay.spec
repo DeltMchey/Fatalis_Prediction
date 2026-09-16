@@ -18,29 +18,47 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(SPECPATH).parent if 'SPECPATH' in dir() else Path('.')
 
+# XGBoost runtime pieces are located via the installed package (build-time
+# requirement: xgboost in requirements.txt). Imported before datas/binaries
+# because both reference the package path.
+import xgboost as _xgb  # noqa: E402
+
 # ---- Bundled data resources ----
 datas = [
-    # AI model (17.6 MB) — used by ActionPredictor at runtime
+    # AI model (7.5 MB, P7 adopted Run B xgboost) — used by ActionPredictor at runtime
     (str(PROJECT_ROOT / 'models' / 'fatalis_ai_model.pkl'), 'models'),
+    # XGBoost package data: VERSION is read by xgboost._c_api at import time
+    (str(Path(_xgb.__file__).resolve().parent / 'VERSION'), 'xgboost'),
 ]
 
 # ---- Native binaries ----
-binaries = []
+# XGBoost native DLL (54 MB): PyInstaller 6.21 bundles no xgboost hook, and
+# the DLL is ctypes-loaded from <pkg>/lib/xgboost.dll (xgboost/libpath.py),
+# invisible to import analysis — collect explicitly into xgboost/lib/.
+binaries = [
+    (str(Path(_xgb.__file__).resolve().parent / 'lib' / 'xgboost.dll'), 'xgboost/lib'),
+]
 
 # ---- Hidden imports ----
 # Overlay process: core + model + data + ui (no dashboard/bootstrap)
 hiddenimports = [
     # DearPyGui
     'dearpygui._dearpygui',
-    # LightGBM
+    # LightGBM (legacy, kept for bundle parity with Dashboard)
     'lightgbm', 'lightgbm.basic', 'lightgbm.callback', 'lightgbm.sklearn',
+    # XGBoost (P7 adoption)
+    'xgboost', 'xgboost.sklearn',
     # scikit-learn edge cases
     'sklearn.utils._typedefs', 'sklearn.utils._vector_sentinel',
     # pandas internals
     'pandas._libs.tslibs',
     # Project packages (Overlay process)
     'src.core.state_tracker', 'src.core.memory_reader',
-    'src.model.predictor', 'src.data.recorder',
+    'src.model.predictor',
+    # P7: classes referenced only via pickle inside the adopted model pipeline
+    #   (joblib.load unpickles FeatureBuilder / LabelDecodedEstimator dynamically)
+    'src.model.features', 'src.model.label_decode',
+    'src.data.recorder',
     'src.ui.overlay', 'src.ui.fonts',
     'src.app.config',
     'src.config.actions', 'src.config.offsets',

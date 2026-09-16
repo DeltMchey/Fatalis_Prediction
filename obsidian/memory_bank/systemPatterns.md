@@ -19,8 +19,9 @@
 └───────────────────────────┬──────────────────────────────────┘
                             │ (offline, via filesystem)
                             ▼
-    CSV files → data_cleaner.py → ML_Ready_Dataset.csv
-              → train_lgbm.py → fatalis_ai_model.pkl → joblib.load
+    CSV files → data_cleaner.py (merge semantics) → ML_Ready_Dataset.csv
+              → src/model/production_backend.py (Run B XGBoost)
+              → fatalis_ai_model.pkl → joblib.load
 ```
 
 ## Core Design Patterns
@@ -75,6 +76,65 @@ is_enraged   = 0 < enrage_timer < enrage_max
 
 **Why**: Replaces the old soft-timer approach (roar action → +180s) with frame-precise detection. Discovered via `enrage.py` memory scanner.
 
+### 5. Two-Generation Backup Chain + Factory Model (两代备份链 + 出厂模型回滚层, v1.2.0)
+
+**Pattern**: All destructive writes (model AND dataset) go through `promote_with_backup()` in `src/core/backup_chain.py`: write to `.tmp` → atomic replace → rotate the target into a two-generation chain.
+
+```
+promote_with_backup(tmp, target, generations=2)
+  → target            (new content, atomically promoted)
+  → target.bak        (previous version)
+  → target.bak2       (version before that)
+  → same-sha skip: if tmp sha == target sha, rotation is skipped entirely
+
+Rollback ladder (user view):
+  factory_model.pkl   (immutable shipped copy, never touched by training)
+  → fatalis_ai_model.pkl.bak  → .bak2
+  dataset: same chain, or delete + rebuild byte-identically from 19 shipped raw CSVs
+```
+
+**Why**: The v3 preview incident (recording 1 fight silently replaced the shipped 19-session dataset with a 164-row single session) exposed silent data loss. Same-sha skip matters because Run B is deterministic — retraining unchanged data produces a bit-identical model and must not consume the backup. The factory copy deliberately avoids the `.bak` name: `.bak` is the first runtime generation and would be pushed forward on the first retrain; "factory" and "previous version" cannot share one slot.
+
+### 6. Dataset Merge Semantics (数据集合并语义, v1.2.0)
+
+**Pattern**: When rebuilding `ML_Ready_Dataset.csv`, `data_cleaner.py` keeps rows whose `source_session` is NOT among the on-disk CSVs, then re-extracts and appends sessions that ARE present.
+
+```
+rebuild:
+  keep   = old_df[~old_df.source_session.isin(on_disk_sessions)]   # history preserved
+  output = keep + re-extract(on_disk_sessions)
+  guarantee: all CSVs present → output byte-identical to factory dataset
+  legacy format (no source_session column) → no merge, warn, stays in backup chain
+```
+
+**Why**: Users record new fights incrementally; a full-replace cleaner would discard every shipped session not currently on disk. Merge semantics make "record one fight → one-click retrain" safe by construction, with the byte-identical guarantee acting as the regression anchor.
+
+### 7. Selftest Build Gate (--selftest 构建门禁, v1.2.0)
+
+**Pattern**: Both frozen EXEs expose `--selftest`: resolve paths → load the real model → run one predict → exit 0/1. `scripts/build_exe.ps1` step 7 runs both EXEs and fails the build on any non-zero exit; Overlay runs with CWD=TEMP to cover the frozen-path/CWD scenario.
+
+```
+BlackDragon.exe --selftest        (CWD = project root)  → exit 0
+BlackDragonOverlay.exe --selftest (CWD = TEMP)          → exit 0
+implementation trap: PowerShell & exe does not wait for GUI-subsystem
+processes → $LASTEXITCODE is stale → must use Start-Process -Wait -PassThru
+```
+
+**Why**: The old "alive for 10s" smoke test could never observe model-load failures — the load happens after game attach and failures were silently swallowed. Selftest exercises the exact frozen import chain (incl. dynamically-referenced `sklearn.pipeline` inside the pickle) in the real EXE process.
+
+### 8. Deterministic Training Backend (确定性训练后端, v1.2.0)
+
+**Pattern**: `src/model/production_backend.py` mirrors the FLAML winner's (Run B) training semantics bit-for-bit in first-class code: stratified split (random_state=42) → FeatureBuilder fit on train_80 only (leak red line) → rare-class auto_augment mirror (<20-sample classes row-copied, 1949→2175) → shuffle(random_state=1) → XGBClassifier(RUNB_BEST_CONFIG, n_jobs=1, no random_state) → LabelDecodedEstimator → sklearn Pipeline → `.tmp` + promote_with_backup.
+
+```
+--pipeline = data_cleaner (merge semantics) → production_backend (Run B retrain)
+--train    = legacy train_lgbm (LightGBM), kept for backward compatibility
+observability: data summary line (📊 sessions/rows/classes vs previous),
+⚠ destructive-change warnings (only warn, never block), tee to train_*.log (keep 10)
+```
+
+**Why**: One-click training must reproduce the adopted model exactly (missing the augment/shuffle mirror shifts top3 by +0.6pp). Encapsulating the pipeline inside the sklearn Pipeline (6 raw features in, 12 columns internally) keeps `ActionPredictor.predict`'s 6-arg contract unchanged for Dashboard/Overlay.
+
 ## Data Flow Pattern
 
 ```
@@ -82,15 +142,20 @@ is_enraged   = 0 < enrage_timer < enrage_max
                               (8 columns: timestamp, hp%, phase, enrage, distance, angle, posture, action_id)
 
 [Cleaning]   Per-frame CSV → ACTION_MAPPING → Posture FSM → Transition extraction
+                              + merge semantics (keep sessions not on disk, v1.2.0)
                               Output: ML_Ready_Dataset.csv
-                              (7 columns: distance, angle, posture, prev_action, phase, enrage → next_action)
+                              (8 columns: distance, angle, posture, prev_action, phase, enrage,
+                               next_action, source_session)
 
-[Training]   ML_Ready_Dataset.csv → LightGBM (6 features, multiclass) → .pkl model
+[Training]   ML_Ready_Dataset.csv → production_backend.py (Run B XGBoost, 12 columns via
+              FeatureBuilder, deterministic) → .pkl + backup chain + sidecar
+              legacy: train_lgbm.py (LightGBM, 6 features) via --train
 
-[Pipeline]   `launch.py --pipeline` = Cleaning → Training (一键流程)
+[Pipeline]   `launch.py --pipeline` = data_cleaner (merge) → production_backend (一键流程)
               Unknown actions (not in ACTION_DB) filtered with warning at both stages
 
-[Inference]  Live memory → 6 features → predict_proba() → filter → Top-3 → overlay
+[Inference]  Live memory → 6 features → Pipeline.predict_proba (12 columns internally)
+              → filter → Top-3 → overlay
 ```
 
 ## Process / Thread Model
@@ -101,7 +166,8 @@ Process 1: Dashboard (launch.py / BlackDragon.exe)
   ├─ GameService daemon: 2s poll game process → attach/detach P4 modules
   ├─ CombatRecorder daemon: 0.1s record frames → CSV (when attached)
   ├─ (subprocess) BlackDragonOverlay.exe
-  └─ (subprocess) BlackDragon.exe --pipeline  ← v1.1: one-click clean+train (button triggered)
+  └─ (subprocess) BlackDragon.exe --pipeline  ← one-click clean+train (v1.2: data_cleaner
+                                                 merge → production_backend Run B retrain)
 
 Process 2: Overlay (overlay.py / BlackDragonOverlay.exe)
   ├─ Main thread: dearpygui render loop (OverlayUI.run) — update_logic every frame

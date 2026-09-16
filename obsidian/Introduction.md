@@ -26,30 +26,31 @@ BlackDragon（黑龙）是一个基于**内存读取 + 机器学习**的《怪�
 
 | 功能 | 描述 |
 |------|------|
-| **实时预测** | LightGBM 多分类模型（~40-60 个招式类别），每 0.5 秒推理一次，显示 Top-3 预测 |
+| **实时预测** | XGBoost 多分类模型（46 个招式类别，v1.2.0 起经 AutoML 迁移自 LightGBM），每 0.5 秒推理一次，显示 Top-3 预测 |
 | **透明覆盖层** | DearPyGui 悬浮窗口（420×350），位于屏幕右上角，可穿透鼠标点击 |
 | **游戏规则过滤** | 根据战斗阶段/怪物姿态硬过滤不可能招式，保证预测物理可行 |
 | **飞天火预警** | 基于 HP 血线阈值的终极技能预警（红色警告） |
 | **战斗录制** | 实时 CSV 数据记录（~10 行/秒），累积数据用于模型训练 |
 | **控制中心** | Dashboard 图形界面，管理覆盖层、录制、训练和实时日志 |
+| **一键训练** | 一键清洗 + 重训（几秒完成，自动合并历史会话 + 备份链保护） |
 
 ### 技术指标
 
 | 指标 | 数值 |
 |------|------|
-| 模型类型 | LightGBM 多分类器 |
-| 特征维度 | 6 维（距离、角度、姿态、上一招、阶段、发怒） |
-| 招式类别 | ~40-60 个 |
-| 推理频率 | 0.5 秒/次，单次 < 5ms |
-| Top-3 命中率 | 56.17%（基线） |
-| 测试覆盖 | 556 个测试，94% 覆盖率 |
-| 模型大小 | ~18 MB（joblib 序列化） |
+| 模型类型 | XGBoost 多分类器（sklearn Pipeline 封装，190 树） |
+| 特征维度 | 6 维输入（Pipeline 内扩展 12 列：距离、角度、姿态、上一招、阶段、发怒 + 6 派生） |
+| 招式类别 | 46 个 |
+| 推理频率 | 0.5 秒/次，p95 4.31ms（单线程） |
+| Top-3 命中率 | 66.19%（raw）/ **65.37%**（实战硬过滤口径，留出集） |
+| 测试覆盖 | 766 个测试通过 |
+| 模型大小 | 7.46 MB（joblib 序列化；旧 LightGBM 为 19.05 MB） |
 
 ---
 
 ## 2. 模块总览
 
-BlackDragon v1.0 采用**双进程架构**（ADR-P5.2）：Dashboard 控制中心与 Overlay 透明覆盖层是两个独立的 Python 进程。
+BlackDragon 采用**双进程架构**（ADR-P5.2）：Dashboard 控制中心与 Overlay 透明覆盖层是两个独立的 Python 进程。
 
 ### 2.1 源码目录树（`src/`）
 
@@ -134,13 +135,13 @@ src/
 
 #### 2.2.4 `src/model/predictor.py` — ActionPredictor
 
-**职责**：LightGBM 模型加载 + **两层预测推理管线**。
+**职责**：XGBoost Pipeline 模型加载 + **两层预测推理管线**（对外 6 特征契约自 v1.0 未变；Pipeline 内 FeatureBuilder 自动扩展 12 列）。
 
 **推理管线**（每 0.5s 一次）：
 ```text
-6 特征构造 → predict_proba() → Phase Filter（阶段过滤）
-    → Posture Filter（姿态过滤） → Renormalize（重归一化）
-    → Top-3 + 3% 概率阈值
+6 特征构造 → Pipeline predict_proba（FeatureBuilder 12 列 → XGBoost）
+    → Phase Filter（阶段过滤） → Posture Filter（姿态过滤）
+    → Renormalize（重归一化） → Top-3 + 3% 概率阈值
 ```
 
 | 方法 | 功能 |
@@ -223,13 +224,15 @@ src/
 
 **职责**：启动环境检查。Python ≥ 3.11 版本检测 + requirements.txt 依赖比对 + 可选自动 pip 安装。零第三方依赖（在 pip install 之前运行）。
 
-#### 2.2.12 离线脚本（独立于进程外）
+#### 2.2.12 离线脚本与训练后端（独立于进程外）
 
 | 脚本 | 功能 |
 |------|------|
-| `data_cleaner.py` | ETL 数据清洗：合并 17+ 个原始 CSV → 过滤 → 动作合并 → 姿态追踪 → 派生对提取 → `ML_Ready_Dataset.csv` |
-| `train_lgbm.py` | LightGBM 训练：加载清洗数据 → 编码 → 8:2 分割 → 300 棵树训练 → 输出 `fatalis_ai_model.pkl` + 特征重要性图 |
+| `data_cleaner.py` | ETL 数据清洗：合并原始 CSV（**合并语义**：保留历史会话）→ 过滤 → 动作合并 → 姿态追踪 → 派生对提取 → `ML_Ready_Dataset.csv` |
+| `src/model/production_backend.py` | 一键训练后端（v1.2.0，`--pipeline`）：Run B 配置确定性重训 XGBoost Pipeline（几秒完成）+ 数据摘要行 + 破坏性守门告警 + 两代备份链 + 训练日志 |
+| `train_lgbm.py` | LightGBM 训练（**legacy**，`--train` 入口保留向后兼容） |
 | `data_upgrade.py` | 旧数据升级：为缺少 `phase`/`is_enraged` 列的历史 CSV 回填数据 |
+| `scripts/` | AutoML 工具链（train_automl / export_model / adopt_model / benchmark_model）与构建脚本 |
 
 ---
 
@@ -295,15 +298,16 @@ GameService daemon 每 2s 轮询:
 ### 3.4 离线训练管线
 
 ```text
-data/*.csv (17+ 个战斗录制文件)
+data/*.csv (19 个出厂文件 + 用户录制)
         │
         ▼  data_cleaner.py
-        │  (动作合并/姿态追踪/派生提取/过滤小动作)
+        │  (动作合并/姿态追踪/派生提取/过滤/合并语义)
 data/ML_Ready_Dataset.csv
         │
-        ▼  train_lgbm.py
-        │  (LightGBM 多分类训练, 300 树, early_stopping=15)
-models/fatalis_ai_model.pkl + models/feature_importance.png
+        ▼  src/model/production_backend.py
+        │  (XGBoost Run B 重训, 190 树, 几秒完成; legacy: train_lgbm.py)
+models/fatalis_ai_model.pkl + feature_importance.png
+  (+ .bak/.bak2 备份链 + factory_model.pkl 出厂副本 + sidecar + train log)
 ```
 
 ### 3.5 双进程架构
@@ -344,9 +348,8 @@ python -m venv .venv
 # 3. 安装依赖
 pip install -r requirements.txt
 
-# 4. 训练模型（首次使用，使用内置数据）
-python data_cleaner.py      # 数据清洗 → ML_Ready_Dataset.csv
-python train_lgbm.py        # 模型训练 → fatalis_ai_model.pkl
+# 4. 训练模型（首次使用，内置数据；也可直接用随包模型）
+python launch.py --pipeline # 一键: 数据清洗（合并语义）→ XGBoost 重训 → 备份链
 ```
 
 ### 4.3 启动系统
@@ -392,7 +395,7 @@ python overlay.py
 | Tab | 功能 |
 |-----|------|
 | **控制台** | 覆盖层启停按钮、录制开关、CSV 文件列表 |
-| **训练** | 一键启动/取消 LightGBM 模型训练、实时训练输出 |
+| **训练** | 一键启动/取消模型训练（XGBoost 一键管线）、实时训练输出 |
 | **日志** | 实时滚动日志（所有模块的 logger 输出） |
 | **状态栏** | 游戏/模型/录制/覆盖层 四色指示灯 |
 
@@ -401,11 +404,15 @@ python overlay.py
 当累积更多战斗数据后，可以重新训练模型以提升预测精度：
 
 ```bash
-# 方式一：命令行
-python data_cleaner.py
-python train_lgbm.py
+# 方式一：命令行（推荐，一键 = 清洗 → 重训）
+python launch.py --pipeline
+#   训练前打印数据摘要行（本次 vs 上代 会话/行/类），破坏性变化打 ⚠ 告警
+#   你的新录像自动与随包数据集合并，不会静默替换
 
-# 方式二：Dashboard → 训练 Tab → 点击"开始训练"
+# 方式二：Dashboard → 训练 Tab → 点击"开始训练"（同一链路）
+
+# 方式三：legacy LightGBM 路径（向后兼容）
+python train_lgbm.py
 ```
 
 ---
@@ -448,10 +455,10 @@ python train_lgbm.py
 ### 5.6 模型训练注意事项
 
 - 训练脚本运行在**子进程**中：不会阻塞 Dashboard 界面
-- 训练使用 `data/ML_Ready_Dataset.csv` 作为输入
-- 训练产物会**覆盖**旧模型文件（`models/fatalis_ai_model.pkl`）
-- 目前没有模型版本管理（P6 计划引入），建议手动备份旧模型
-- 更多数据 = 更好模型：建议录制至少 10+ 场黑龙战斗后再重训
+- 训练使用 `data/ML_Ready_Dataset.csv` 作为输入（一键链路自动先清洗合并）
+- 训练产物通过**两代备份链**提升（`.bak` / `.bak2`），内容不变时跳过轮换
+- 随包分发不可变出厂副本 `models/factory_model.pkl`，可一步回滚到发行模型
+- 更多数据 = 更好模型：建议录制更多黑龙战斗后一键重训（数据自动合并）
 
 ### 5.7 运行中的安全事项
 
@@ -465,7 +472,8 @@ python train_lgbm.py
 - `BlackDragon.exe` → Dashboard（等同于 `python launch.py`）
 - `BlackDragonOverlay.exe` → 覆盖层（等同于 `python overlay.py`）
 - 双击 `BlackDragon.exe` 即可启动，自动检测游戏并弹出覆盖层
-- 训练功能在冻结版中通过 `BlackDragon.exe --train` 运行（Dashboard 训练按钮触发）
+- 训练功能在冻结版中通过同一 EXE 的 `--pipeline` 模式运行（Dashboard 训练按钮触发）
+- **自检**：任一 EXE 运行 `--selftest` 可验证"路径解析 → 模型加载 → 一次推理"（exit 0 = 健康）；该自检也是构建门禁
 
 ### 5.9 已知限制
 
@@ -474,8 +482,8 @@ python train_lgbm.py
 | 单一怪物 | 仅支持黑龙（Fatalis），硬编码 zone=417，HP>500 判定 |
 | 无多人追踪 | 不追踪其他玩家的位置和状态 |
 | 无武器区分 | 不根据玩家武器类型调整预测 |
-| 单模型 | 仅一个 LightGBM 模型，未使用集成学习 |
-| 无模型版本管理 | 训练会覆盖旧模型 |
+| 单模型 | 仅一个 XGBoost 生产模型（+legacy LightGBM 路径），未使用集成 |
+| 启动内存 | 模型加载带来约 122MB 一次性 RSS 增量（xgboost 固有，用户裁决接受；稳态在预算内） |
 
 ---
 
@@ -510,10 +518,12 @@ ML 概率 → Phase Filter（阶段过滤）
 | 内存读取 | pymem | Windows 进程内存（ReadProcessMemory） |
 | GUI 框架 | DearPyGui 2.x | 透明覆盖层 + 控制中心双窗口 |
 | 窗口穿透 | Win32 API (ctypes) | WS_EX_LAYERED \| WS_EX_TRANSPARENT |
-| ML 框架 | LightGBM 4.x | 多分类梯度提升树 |
+| ML 框架（生产） | XGBoost 3.4.1 | 多分类梯度提升树（sklearn Pipeline 封装，v1.2.0 起） |
+| ML 框架（legacy） | LightGBM 4.6.0 | `--train` 旧训练路径保留 |
+| AutoML（仅实验） | FLAML 2.6.0 | `scripts/train_automl.py`（生产推理零 flaml 依赖） |
 | 数据处理 | pandas, numpy | CSV 读写 + 特征构造 |
 | 模型序列化 | joblib | .pkl 格式 |
-| 测试框架 | pytest + coverage | 556 tests, 94% 覆盖率 |
+| 测试框架 | pytest + coverage | 766 tests passed（v1.2.0） |
 | CI | GitHub Actions | Ubuntu + Windows, Python 3.11/3.12 |
 
 ---

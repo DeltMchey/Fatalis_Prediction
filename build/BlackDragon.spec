@@ -41,9 +41,10 @@ binaries = [
 # ---- Hidden imports ----
 # DearPyGui: DPG 2.x dynamically loads its C-extension backend
 # LightGBM: native lib_lightgbm.dll — must be collected explicitly
-#   (still needed: --pipeline frozen training walks the legacy train_lgbm path)
+#   (still needed: --train legacy frozen training walks the train_lgbm path)
 # XGBoost: native libxgboost.dll — collected by the PyInstaller hook once
-#   'xgboost' is listed here (P7: adopted production model is an xgboost pipeline)
+#   'xgboost' is listed here (P7: adopted production model is an xgboost pipeline;
+#   P8: --pipeline one-click training also retrains xgboost via production_backend)
 # sklearn/pandas: C-extension edge cases
 hiddenimports = [
     # DearPyGui
@@ -64,6 +65,8 @@ hiddenimports = [
     # P7: classes referenced only via pickle inside the adopted model pipeline
     #   (joblib.load unpickles FeatureBuilder / LabelDecodedEstimator dynamically)
     'src.model.features', 'src.model.label_decode',
+    # P8: Run B one-click training backend (dynamically imported in launch --pipeline)
+    'src.model.production_backend',
     'src.data.recorder',
     'src.ui.fonts',
     'src.app.config', 'src.app.controller', 'src.app.game_service',

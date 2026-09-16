@@ -24,6 +24,10 @@ import xgboost as _xgb  # noqa: E402
 datas = [
     # AI model (7.5 MB, P7 adopted Run B xgboost) — used by ActionPredictor at runtime
     (str(PROJECT_ROOT / 'models' / 'fatalis_ai_model.pkl'), 'models'),
+    # v3(F2): 出厂模型不可变副本 — 训练/备份轮换永不触碰；用户回滚 = 复制覆盖。
+    # 不放 .bak 位置：.bak 是运行时轮换链第一代（首次内容变化的训练即推进），
+    # "出厂"与"上一版"两个语义不能挤在同一文件。
+    (str(PROJECT_ROOT / 'models' / 'factory_model.pkl'), 'models'),
     # Training dataset (85.8 KB) — used by train_fatalis_ai() via --train / --pipeline mode
     (str(PROJECT_ROOT / 'data' / 'ML_Ready_Dataset.csv'), 'data'),
     # XGBoost package data: VERSION is read by xgboost._c_api at import time
@@ -67,6 +71,9 @@ hiddenimports = [
     'src.model.features', 'src.model.label_decode',
     # P8: Run B one-click training backend (dynamically imported in launch --pipeline)
     'src.model.production_backend',
+    # v3(F3): shared backup-chain module (imported inside data_cleaner /
+    # production_backend at runtime)
+    'src.core.backup_chain',
     'src.data.recorder',
     'src.ui.fonts',
     'src.app.config', 'src.app.controller', 'src.app.game_service',

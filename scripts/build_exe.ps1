@@ -152,6 +152,41 @@ if (Test-Path $ModelSrc) {
 }
 
 # ---------------------------------------------------------------------------
+# 5d. v3(F2): Surface the immutable factory model next to the exe.
+# models/factory_model.pkl is the shipped-model rollback copy. The training /
+# backup-rotation machinery NEVER touches it (the .bak/.bak2 chain operates on
+# fatalis_ai_model.pkl only), so it stays byte-identical to the shipped model
+# no matter how many times the user retrains.
+# ---------------------------------------------------------------------------
+Write-Host "Surfacing factory model..."
+$FactorySrc = Join-Path $ProjectRoot "dist/BlackDragon/_internal/models/factory_model.pkl"
+$FactoryDst = Join-Path $ProjectRoot "dist/BlackDragon/models/factory_model.pkl"
+if (Test-Path $FactorySrc) {
+    Copy-Item $FactorySrc $FactoryDst -Force
+    Write-Host "Factory model copied to dist/BlackDragon/models (rollback copy)"
+} else {
+    Write-Error "Factory model not found at $FactorySrc (v3 release requires it)"
+    exit 1
+}
+
+# ---------------------------------------------------------------------------
+# 5e. v3(F2): Bundle the raw combat CSVs (~11 MB) next to the dataset.
+# Insurance: with the raw sessions shipped, data_cleaner can rebuild the
+# factory dataset from scratch even if ML_Ready_Dataset.csv is deleted or
+# corrupted. The v3 merge semantics also make a full-CSV rebuild
+# byte-identical to the factory dataset (zero-change guarantee).
+# ---------------------------------------------------------------------------
+Write-Host "Bundling raw combat CSVs..."
+$RawCsvDstDir = Join-Path $ProjectRoot "dist/BlackDragon/data"
+$RawCsvs = Get-ChildItem -Path (Join-Path $ProjectRoot "data") -Filter "fatalis_combat_data_*.csv"
+if ($RawCsvs.Count -gt 0) {
+    Copy-Item $RawCsvs.FullName -Destination $RawCsvDstDir -Force
+    Write-Host "  Copied $($RawCsvs.Count) raw combat CSVs -> dist/BlackDragon/data/"
+} else {
+    Write-Warning "No raw combat CSVs found in data/ (factory rebuild insurance missing)"
+}
+
+# ---------------------------------------------------------------------------
 # 6. Summary + post-build smoke test
 # ---------------------------------------------------------------------------
 Write-Host ""
@@ -159,7 +194,9 @@ Write-Host "Build complete!" -ForegroundColor Green
 Write-Host "  dist/BlackDragon/BlackDragon.exe"
 Write-Host "  dist/BlackDragon/BlackDragonOverlay.exe  (merged)"
 Write-Host "  dist/BlackDragon/data/ML_Ready_Dataset.csv"
+Write-Host "  dist/BlackDragon/data/fatalis_combat_data_*.csv (factory raw sessions)"
 Write-Host "  dist/BlackDragon/models/fatalis_ai_model.pkl"
+Write-Host "  dist/BlackDragon/models/factory_model.pkl (immutable rollback copy)"
 Write-Host ""
 
 # ---------------------------------------------------------------------------

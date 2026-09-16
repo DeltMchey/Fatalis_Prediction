@@ -11,8 +11,8 @@
 运行模式（PyInstaller 打包支持）：
   - 开发模式:  python launch.py          → spawn `python overlay.py`
   - 冻结模式:  BlackDragon.exe           → spawn `BlackDragonOverlay.exe`
-  - 流水线模式: python launch.py --pipeline → data_cleaner → train_lgbm（冻结模式由 controller 拉起）
-  - 训练模式:  python launch.py --train  → 仅运行 train_lgbm.py（向后兼容）
+  - 流水线模式: python launch.py --pipeline → data_cleaner → Run B 后端（冻结模式由 controller 拉起）
+  - 训练模式:  python launch.py --train  → 仅运行 train_lgbm.py（legacy，向后兼容）
   （由 sys.frozen 检测；冻结模式下跳过 DependencyChecker——依赖已打包）
 
 Usage:
@@ -40,10 +40,10 @@ def main() -> None:
 
     运行模式（PyInstaller 打包支持）：
       - 默认:        Dashboard 控制中心（launch.py / BlackDragon.exe）
-      - --pipeline:  数据清洗 + 模型训练（v1.1 一键流程，frozen 模式下由 controller 拉起）
-      - --train:     仅模型训练（向后兼容）
+      - --pipeline:  数据清洗 + Run B 训练后端（一键流程，frozen 模式下由 controller 拉起）
+      - --train:     仅模型训练（legacy train_lgbm，向后兼容）
     """
-    # 0a. --pipeline 模式：data_cleaner → train_lgbm（v1.1 一键训练流程）
+    # 0a. --pipeline 模式：data_cleaner → Run B 后端（一键训练流程）
     if "--pipeline" in sys.argv:
         sys.argv.remove("--pipeline")
         # Windows 控制台/PIPE 默认 GBK——脚本含 emoji 输出，强制 UTF-8 避免 UnicodeEncodeError
@@ -53,9 +53,9 @@ def main() -> None:
         except Exception:
             pass  # 非 TTY/不支持 reconfigure 时忽略
         from data_cleaner import clean_combat_data
-        from train_lgbm import train_fatalis_ai
+        from src.model.production_backend import train_runb_backend
         clean_combat_data()
-        train_fatalis_ai()
+        train_runb_backend()
         return
 
     # 0b. --train 模式：进入训练入口（frozen 模式下由 controller 拉起）

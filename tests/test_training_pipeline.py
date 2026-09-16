@@ -1,7 +1,8 @@
 """P5.4: Training pipeline integration tests — --pipeline flag (v1.1).
 
 验证:
-  - --pipeline 依次调用 clean_combat_data() → train_fatalis_ai()（调用顺序）
+  - --pipeline 依次调用 clean_combat_data() → train_runb_backend()（调用顺序）
+    （P8 起路由到 src.model.production_backend；train_lgbm 为 --train legacy 入口）
   - 冻结模式命令: [exe, --pipeline]
   - 开发模式命令: [python, launch.py, --pipeline]
   - clean 失败（无原始 CSV）→ 优雅返回，不崩溃
@@ -43,12 +44,13 @@ from tests.conftest import write_combat_csv  # noqa: E402
 
 class TestPipelineCallOrder:
     def test_pipeline_flag_calls_clean_then_train_in_order(self, monkeypatch):
-        """--pipeline → 先 clean 后 train，且不启动 Dashboard。"""
+        """--pipeline → 先 clean 后 train（Run B 后端），且不启动 Dashboard。"""
         calls = []
         monkeypatch.setattr("data_cleaner.clean_combat_data",
                             lambda: calls.append("clean"))
-        monkeypatch.setattr("train_lgbm.train_fatalis_ai",
-                            lambda: calls.append("train"))
+        monkeypatch.setattr(
+            "src.model.production_backend.train_runb_backend",
+            lambda: calls.append("train"))
         old_argv = sys.argv
         try:
             sys.argv = ["BlackDragon.exe", "--pipeline"]
@@ -60,7 +62,8 @@ class TestPipelineCallOrder:
     def test_pipeline_flag_removed_from_argv(self, monkeypatch):
         """--pipeline 应从 sys.argv 中移除。"""
         monkeypatch.setattr("data_cleaner.clean_combat_data", MagicMock())
-        monkeypatch.setattr("train_lgbm.train_fatalis_ai", MagicMock())
+        monkeypatch.setattr(
+            "src.model.production_backend.train_runb_backend", MagicMock())
         old_argv = sys.argv
         try:
             sys.argv = ["BlackDragon.exe", "--pipeline", "extra"]
@@ -74,7 +77,8 @@ class TestPipelineCallOrder:
         mock_clean = MagicMock()
         mock_train = MagicMock()
         monkeypatch.setattr("data_cleaner.clean_combat_data", mock_clean)
-        monkeypatch.setattr("train_lgbm.train_fatalis_ai", mock_train)
+        monkeypatch.setattr(
+            "src.model.production_backend.train_runb_backend", mock_train)
         monkeypatch.setattr(launch, "Dashboard", MagicMock())
         monkeypatch.setattr(launch, "GameService", MagicMock())
         old_argv = sys.argv

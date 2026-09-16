@@ -171,17 +171,20 @@ class TestTrainMode:
 
 
 # =============================================================================
-# v1.1: --pipeline 训练入口（data_cleaner → train_lgbm）
+# v1.1: --pipeline 训练入口（data_cleaner → Run B 后端 production_backend）
+#   P8 起 --pipeline 路由到 src.model.production_backend.train_runb_backend；
+#   train_lgbm 保留为 --train（legacy）入口。
 # =============================================================================
 
 class TestPipelineMode:
     def test_main_handles_pipeline_flag(self, monkeypatch):
-        """--pipeline flag → 调用 clean_combat_data() + train_fatalis_ai()，不启动 Dashboard。"""
+        """--pipeline flag → 调用 clean_combat_data() + train_runb_backend()，不启动 Dashboard。"""
         import sys
         mock_clean = MagicMock()
         mock_train = MagicMock()
         monkeypatch.setattr("data_cleaner.clean_combat_data", mock_clean)
-        monkeypatch.setattr("train_lgbm.train_fatalis_ai", mock_train)
+        monkeypatch.setattr(
+            "src.model.production_backend.train_runb_backend", mock_train)
         old_argv = sys.argv
         try:
             sys.argv = ["BlackDragon.exe", "--pipeline"]
@@ -195,7 +198,8 @@ class TestPipelineMode:
         """--pipeline 应从 sys.argv 中移除。"""
         import sys
         monkeypatch.setattr("data_cleaner.clean_combat_data", MagicMock())
-        monkeypatch.setattr("train_lgbm.train_fatalis_ai", MagicMock())
+        monkeypatch.setattr(
+            "src.model.production_backend.train_runb_backend", MagicMock())
         old_argv = sys.argv
         try:
             sys.argv = ["BlackDragon.exe", "--pipeline", "extra"]
@@ -210,3 +214,4 @@ class TestPipelineMode:
         src = inspect.getsource(launch.main)
         assert '"--pipeline" in sys.argv' in src
         assert "clean_combat_data" in src
+        assert "train_runb_backend" in src

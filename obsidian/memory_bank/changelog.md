@@ -4,6 +4,49 @@
 
 ---
 
+### 2026-09-16 — P6.1 AutoML 模型迁移全程：FLAML 选型 → Run B 采纳 → 一键接入 → hotfix → v1.2.0 发版
+
+#### Phase
+P6.1 AutoML Model Migration — v1.2.0 ✅（分支 `feature/automl-experiment`，4149ede..fa6545e 约 24 commits，已合并 main）
+
+#### Completed（里程碑时间线）
+- **P0–P2 实验基建**：`requirements-experiment.txt`（flaml 2.6.0 钉版，运行时零新增依赖原则）；共享数据集模块 + 会话溯源（source_session）；统一四指标 benchmark CLI（top1 / top3_raw / top3_filtered / macro_top3）；留出集缓存（488 行 / 46 类）
+- **P3 基线锚点**：生产 LightGBM 基线全项实测（top3_raw 60.25%、top3_filtered 58.81%、p95 5.35ms、19.05MB）
+- **P4–P5 训练与导出**：FLAML 训练 CLI（`scripts/train_automl.py`，预算 5400s）+ 零 flaml 运行时导出（提取路径：确定性重训复现 + 独立导出物）
+- **P6 候选对比**：Run A（6 特征 xgboost，top3 65.57%）/ Run B（12 派生特征 xgboost，top3 66.19%）；**Run B attempt1 堆损坏（0xC0000374）根因查明**：FLAML 默认 `n_jobs=-1` 经 wrapper 转 xgboost `nthread=-1`，运行时 `omp_set_num_threads` 覆盖 OMP 环境变量 → 新增 `--n-jobs` 注入点（`automl.fit(n_jobs=1)`）后训练全程稳定（教训入 ADR-P6.1 Decision 2）
+- **G5a 归因**：加载 RSS 增量 122MB（Run B）主体为 xgboost booster 反序列化固有开销（线程限制无法消除，两轮实验 + 双候选交叉验证）——**用户 Tier 2 裁决接受**（一次性启动增量，稳态 256.8MB ≤ 316.6MB 预算）
+- **P7 采纳**：`scripts/adopt_model.py` 显式采纳 CLI（门槛校验 + .bak 轮换 + 加载复核 + sidecar）；Run B xgboost 成为生产模型（sha256 `ed3db5f8…ce65b5f`，7.46MB）；双 spec 打包 xgboost 运行时（xgboost.dll 显式 binaries + VERSION datas，PyInstaller 6.21 无 hook）
+- **P8 一键管线接入**：新模块 `src/model/production_backend.py`（Run B 胜出配置确定性复现：分层切分 42 → FeatureBuilder 仅 fit train_80 → FLAML auto_augment 镜像 + shuffle(1) → XGBClassifier n_jobs=1 → Pipeline）；`--pipeline` 路由切换，`--train` 保留 legacy
+- **Overlay 静默失败 hotfix（RC1/RC2/RC-B）**：`resolve_runtime_path()` 统一 frozen 路径解析；加载失败 logger.error + UI 橙色「⚠ AI 模型未加载」；Overlay spec 补 `sklearn.pipeline`（pickle 动态引用）；`--selftest` 永久诊断入口 + build_exe.ps1 第 7 步双 EXE selftest 硬门禁（取代存活式冒烟）
+- **v3 数据安全**：`src/core/backup_chain.py` 两代备份链（.bak/.bak2 + same-sha skip）；data_cleaner 合并语义（缺席会话行保留，全量 CSV = 逐字节一致）；训练守门（摘要行 + 破坏性变更告警入 sidecar，只警告不阻塞）；训练日志 tee（train_*.log 保留 10 份）；factory_model.pkl + 原始 CSV 随包（三层回滚）
+- **v1.2.0 正式发版**：版本号、CHANGELOG、README、ADR-P6.1、正式发行包 `Fatalis-Prediction-v1.2.0-windows.zip`（G6 ≤300MB PASS）、memory bank 更新、合并 main（--no-ff）
+
+#### API
+- `python launch.py --pipeline` — 一键训练改为 Run B 后端（`clean_combat_data() → train_runb_backend()`）
+- `python launch.py --train` — legacy LightGBM 路径（不变）
+- `--selftest`（launch.py / overlay.py / 双 EXE）— 自检诊断入口
+- `BlackDragon.exe --pipeline` — 冻结一键训练（几秒完成、单线程）
+
+#### Design Decisions
+- Run B 采纳（vs Run A）：四指标全面占优 + macro 无回退 + 体积更小 + p95 更低（ADR-P6.1 Decision 1）
+- G5a 122MB 超标：用户 Tier 2 裁决接受，理由固化于 sidecar g5a_override_reason（ADR-P6.1 Decision 3）
+- FLAML 训练必须注入点限线程（n_jobs=1），OMP 环境变量无效（ADR-P6.1 Decision 2）
+- factory_model.pkl 刻意不用 .bak 命名（出厂与上一版本不共享轮换槽位）
+- pickle 引用模块（sklearn.pipeline / features / label_decode / production_backend / backup_chain）必须显式进 hiddenimports（打包三课，ADR-P6.1 Decision 6）
+
+#### Metrics
+- 留出集四指标：top1 27.05→**32.58%**、top3_raw 60.25→**66.19%**、top3_filtered 58.81→**65.37%**、macro_top3 54.65→54.50%（无回退）
+- 模型 19.05→**7.46MB**；p95 5.35→**4.31ms**；推理 cpu 407.7→**2.3%**；加载 RSS 增量 +122MB（一次性，裁决接受）
+- Tests: 581 → **766**（+185：automl 训练/导出/采纳/production_backend/backup_chain/合并语义/守门/selftest/路径解析/UI 提示等），全量通过；总覆盖率 86%（新增实验模块摊薄，P4 core 仍 100%）
+- 发行包：~155MB zip（G6 PASS）
+
+#### Review
+- ADR：`obsidian/docs/architecture/ADR-P6.1-automl-model-migration.md`；全程记录：`obsidian/docs/AutoML_P6_Comparison.md` §1–§11
+- 已知债务（未处理）：sha256 工具三处副本（scripts/ 三个 CLI vs backup_chain 正式实现）、selftest helper 双实现（overlay.py / launch.py）
+- 未 push、未发 GitHub Release（用户裁决后执行）
+
+---
+
 ### 2026-08-05 — Stratify Small-Dataset Fallback + Label Data Quality (v1.1.2)
 
 #### Phase

@@ -2,33 +2,41 @@
 
 ## Current Phase
 
-**P5.4 Training Pipeline — v1.1.0 (581 tests, 94% coverage)**
+**P6.1 AutoML Model Migration — v1.2.0 released (766 tests, 86% overall coverage)**
 
 ## Current Goal
 
-BlackDragon v1.1.0 — one-click training pipeline integrated into Dashboard. Dual-process architecture (Dashboard + Overlay) stable. Frozen EXE support includes auto-start, model lifecycle, and `--pipeline` one-click training. 581 tests, 94% coverage.
+BlackDragon v1.2.0 — production model migrated to the AutoML-selected XGBoost pipeline (FLAML Run B). One-click training (`--pipeline`) retrains the winning config on the user's merged recordings in seconds. Data safety: merge semantics, two-generation backup chains, immutable factory model, training gates + logs. Frozen packages carry a `--selftest` diagnostic and the build gates on it. Experiment closed: `feature/automl-experiment` merged back to main (--no-ff), not pushed. 766 tests pass.
 
-## Key Accomplishments (P5.3 → v1.0 RC)
+## Key Accomplishments (P6.1 — v1.2.0)
 
 | Area | Status | Description |
 |------|:---:|------|
-| **P5.3 Dual-process** | ✅ | `launch.py` → Dashboard + `overlay.py` → Overlay (independent DPG contexts per ADR-P5.2) |
-| **Auto-start** | ✅ | `auto_start_overlay=True` (ADR-P5.3); overlay retry loop for game detection |
-| **PyInstaller EXE** | ✅ | Two EXEs (`BlackDragon.exe` + `BlackDragonOverlay.exe`), `--onedir` COLLECT |
-| **Frozen paths** | ✅ | `controller.data_dir` frozen-aware; training `cwd=<exe_dir>`; surfacing `models/` + `data/` |
-| **Model lifecycle** | ✅ | Surfaced model → train → overwrite → reload → predict (closed loop) |
-| **Frozen training** | ✅ | `--pipeline` flag: one-click data clean + model train (v1.1); `--train` preserved for backward compat |
-| **P5.4 Pipeline** | ✅ | `launch.py --pipeline` + Dashboard button → `data_cleaner` → `train_lgbm`; unknown-action defense; frozen support |
-| **RC test** | ✅ | 6/6 scenarios passed: install / dashboard / overlay / data / model / training |
-| **KB v1.0** | ✅ | 50 active docs; 16 legacy archived; ADR index; build/runtime/audit docs complete |
-| **Release files** | ✅ | LICENSE (MIT), CONTRIBUTING, SECURITY, updated README (581 tests, 94%) |
+| **AutoML experiment** | ✅ | FLAML 2.6.0 search (budget 5400s), two candidates (Run A / Run B), unified four-metric benchmark, holdout cache (488 rows / 46 classes) |
+| **Run B adoption** | ✅ | XGBoost pipeline (12 engineered features, 190 trees, 7.46MB) via `scripts/adopt_model.py` gated CLI + sidecar; user Tier 2 decision accepting the one-shot 122MB load RSS delta |
+| **Model quality** | ✅ | top1 27.05→32.58%, top3_raw 60.25→66.19%, top3_filtered 58.81→65.37%, macro no-regression; p95 4.31ms; inference cpu 2.3% |
+| **One-click retrain** | ✅ | `src/model/production_backend.py` reproduces the Run B config deterministically (FLAML auto_augment mirror + shuffle(1), n_jobs=1); `--pipeline` routed to it, `--train` keeps legacy LightGBM |
+| **Data safety (v3)** | ✅ | `src/core/backup_chain.py` two-generation chain (.bak/.bak2 + same-sha skip); cleaner merge semantics (absent sessions preserved); training gates (warn-only) + sidecar + train_*.log tee (last 10) |
+| **Rollback** | ✅ | `models/factory_model.pkl` immutable shipped-model copy + raw combat CSVs bundled — three-layer rollback |
+| **Overlay hotfix** | ✅ | Frozen path resolution (`resolve_runtime_path`), load-failure logging + orange "⚠ AI 模型未加载" hint, `sklearn.pipeline` hiddenimport fix — blank AI area impossible now |
+| **Selftest gate** | ✅ | `--selftest` on both EXEs; `build_exe.ps1` step 7 runs both (Overlay @TEMP) and fails the build on nonzero exit |
+| **Release** | ✅ | `Fatalis-Prediction-v1.2.0-windows.zip` (~155MB, G6 PASS); ADR-P6.1; CHANGELOG/README/memory-bank updated |
 
 ## Key Architecture Decisions
 
 - **ADR-P5.2**: Dual-process architecture (replaces failed in-process Overlay experiments)
 - **ADR-P5.3**: Auto-start + recording defaults; training data surfacing
 - **ADR-P5.4**: Automated training pipeline integration — `--pipeline` flag, 2-step clean+train, unknown-action defense
-- **PyInstaller**: Two-EXE split with shared deps; `--pipeline` / `--train` / `--overlay` flag-based frozen mode
+- **ADR-P6.1**: AutoML model migration — FLAML Run B XGBoost adoption (G5a user override), `n_jobs=-1` OMP override lesson, `production_backend` one-click retrain, data merge + two-generation backup chain, packaging lessons (pickle dynamic imports / xgboost VERSION / selftest gate)
+
+## What We Just Completed
+
+#### P6.1 — AutoML Model Migration (v1.2.0) ✅
+
+- **Status**: ✅ Complete (experiment closed, merged to main)
+- **Deliverables**: production XGBoost model (sha256 `ed3db5f8…`), `src/model/production_backend.py`, `src/core/backup_chain.py`, `scripts/{train_automl,benchmark_model,export_model,adopt_model}.py`, `--selftest` entries, factory model + raw CSVs in package, ADR-P6.1, v1.2.0 release
+- **Key documents**: `obsidian/docs/AutoML_P6_Comparison.md` (§1–§11 full experiment record), `obsidian/docs/architecture/ADR-P6.1-automl-model-migration.md`
+- **Constraint**: legacy `--train` LightGBM path, Overlay dual-process architecture, P4 core interfaces — all unchanged
 
 ## Dual-Track Status
 
@@ -37,12 +45,14 @@ BlackDragon v1.1.0 — one-click training pipeline integrated into Dashboard. Du
 | **Legacy** | `ai_engine.py` (484 lines) | God Class retained as legacy reference + P3 test-compat entry; `python ai_engine.py` fallback |
 | **Extracted** | `src/core/state_tracker.py` | CombatStateTracker — pure state management, 50 tests ✅ |
 | **Extracted** | `src/core/memory_reader.py` | MemoryReader — all pymem reads, 27 tests ✅ |
+| **Extracted** | `src/core/backup_chain.py` | Two-generation backup chain + same-sha skip, 100% coverage ✅ (P6.1) |
 | **Extracted** | `src/model/predictor.py` | ActionPredictor — model load + inference, 31 tests ✅ |
+| **Extracted** | `src/model/production_backend.py` | Run B one-click training backend, 95% coverage ✅ (P6.1) |
 | **Extracted** | `src/data/recorder.py` | CombatRecorder — daemon recording thread, 34 tests ✅ |
 | **Extracted** | `src/ui/overlay.py` | OverlayUI — DearPyGui overlay, 41 tests ✅ |
 | **Composition** | `main.py` | P4+ composition root — recommended entry, 20 tests ✅ |
 
-## What We Just Completed
+## What We Just Completed (historical)
 
 #### P4 Step 5 — OverlayUI Extraction ✅
 

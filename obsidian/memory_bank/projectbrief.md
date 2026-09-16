@@ -12,7 +12,7 @@ Predict Fatalis's next attack in real-time and display it as a transparent in-ga
 
 1. **Reads game memory** — Uses `pymem` to read MonsterHunterWorld.exe process memory directly (not screen capture)
 2. **Records combat data** — Writes real-time combat state to CSV files (~10 rows/sec)
-3. **Trains an ML model** — LightGBM multiclass classifier predicts next action from current state
+3. **Trains an ML model** — XGBoost pipeline (AutoML-selected Run B config, 12 engineered features) predicts next action from current state; one-click retrain in seconds
 4. **Predicts in real-time** — Loads the trained model, runs inference every 0.5s, displays Top-3 predictions
 5. **Applies game-rule filters** — Post-processing with phase/posture constraints ensures predictions are physically possible
 6. **Warns of Nova (飞天火)** — HP-threshold-based alert for the boss's ultimate attack
@@ -21,13 +21,14 @@ Predict Fatalis's next attack in real-time and display it as a transparent in-ga
 
 | Metric | Value |
 |--------|-------|
-| Training samples | Thousands (17 recorded hunts) |
-| Features | 6 (distance, angle, posture, prev_action, phase, enrage) |
-| Model | LightGBM multiclass, ~40-60 action classes |
-| Model file | `fatalis_ai_model.pkl` (~18 MB) |
-| Inference rate | Every 0.5s, < 5ms per prediction |
+| Training samples | 2444 rows / 19 sessions (factory dataset; user recordings merge on retrain) |
+| Input features | 6 (distance, angle, posture, prev_action, phase, enrage) → 12 engineered in-pipeline |
+| Model | XGBoost pipeline (AutoML Run B: 190 trees, single-threaded inference) |
+| Accuracy (holdout) | top1 **32.58%** / top3 raw **66.19%** / **top3 hard-filtered 65.37%** (v1.1: 27.05 / 60.25 / 58.81%) |
+| Model file | `fatalis_ai_model.pkl` (~7.5 MB) + immutable `factory_model.pkl` rollback copy |
+| Inference rate | Every 0.5s, p95 4.31ms, ~2% CPU |
 | Overlay | dearpygui transparent window, 420×350, top-right corner |
 
 ## Current Status
 
-BlackDragon v1.1.0 (P5.4 Training Pipeline Integration). Modular `src/` structure (core/model/data/ui/app/dashboard/bootstrap) extracted from the original God Class. Primary entry is `python launch.py` (Dashboard + Overlay dual-process). One-click training via `python launch.py --pipeline` or Dashboard button. PyInstaller frozen EXE distribution (`BlackDragon.exe` + `BlackDragonOverlay.exe`) ready. 581 tests, 94% coverage.
+BlackDragon v1.2.0 (P6.1 AutoML Model Migration). Production model is an AutoML-selected XGBoost pipeline (FLAML Run B) adopted through a gated benchmark process. One-click training (`python launch.py --pipeline` or Dashboard button) retrains the winning config on the user's merged recordings in seconds, with two-generation backup chains, an immutable factory model, training gates, and per-run logs. Frozen EXE distribution includes `--selftest` diagnostics and the build gates on it. 766 tests, 86% overall coverage. Experiment branch merged to main; push/GitHub Release pending user decision.

@@ -536,3 +536,43 @@ class TestMergeSemantics:
         assert dataset.read_bytes() == v1
         assert bak.read_bytes() == first_bak
         assert not bak2.exists()
+
+    def test_no_raw_csvs_shipped_dataset_untouched(self, pipeline_workdir,
+                                                   capsys):
+        """v1.2.0 发行包形态：data/ 只有 ML_Ready_Dataset.csv、无原始 CSV。
+
+        用户裁决（2026-09-16）：发行包不再附带原始战斗 CSV。此边界下
+        clean_combat_data() 必须优雅返回（打印"未找到"提示，不崩溃），
+        且现有数据集逐字节原样保留——不得报错、不得缩水、不得产生
+        .tmp/.bak 残留。这是合并语义对"重训安全"的最后防线。
+        """
+        data_dir = pipeline_workdir / "data"
+        dataset = data_dir / "ML_Ready_Dataset.csv"
+        # 构造"出厂数据集"：2 个历史会话、3 行（模拟 19 会话真实形态）
+        pd.DataFrame({
+            "distance": [100.0, 120.0, 140.0],
+            "relative_angle": [0.0, 10.0, -10.0],
+            "posture": [1, 1, 0],
+            "previous_action": [37, 53, 81],
+            "phase": [1, 1, 2],
+            "is_enraged": [0, 1, 0],
+            "next_action": [53, 81, 129],
+            "source_session": [
+                "fatalis_combat_data_a.csv",
+                "fatalis_combat_data_a.csv",
+                "fatalis_combat_data_b.csv",
+            ],
+        }).to_csv(dataset, index=False)
+        factory_bytes = dataset.read_bytes()
+
+        data_cleaner.clean_combat_data()
+
+        # 不崩溃（clean_combat_data 正常返回）+ 提示未找到原始 CSV
+        captured = capsys.readouterr()
+        assert "未找到任何战斗数据文件" in captured.out
+        # 数据集逐字节原样保留（不缩水、不重写）
+        assert dataset.read_bytes() == factory_bytes
+        # 无 .tmp/.bak/.bak2 残留
+        assert not (data_dir / "ML_Ready_Dataset.csv.tmp").exists()
+        assert not (data_dir / "ML_Ready_Dataset.csv.bak").exists()
+        assert not (data_dir / "ML_Ready_Dataset.csv.bak2").exists()

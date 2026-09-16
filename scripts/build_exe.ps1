@@ -170,21 +170,17 @@ if (Test-Path $FactorySrc) {
 }
 
 # ---------------------------------------------------------------------------
-# 5e. v3(F2): Bundle the raw combat CSVs (~11 MB) next to the dataset.
-# Insurance: with the raw sessions shipped, data_cleaner can rebuild the
-# factory dataset from scratch even if ML_Ready_Dataset.csv is deleted or
-# corrupted. The v3 merge semantics also make a full-CSV rebuild
-# byte-identical to the factory dataset (zero-change guarantee).
+# 5e. Raw combat CSVs are NOT bundled (user ruling 2026-09-16).
+# The v1.2.0 release ships ONLY the cleaned ML_Ready_Dataset.csv; the 19 raw
+# fatalis_combat_data_*.csv (~11 MB) stay out of the package. Trade-off
+# accepted by the user: "rebuild dataset from scratch" capability is given up
+# — retrain safety is instead guaranteed by the v3(F1) merge semantics in
+# data_cleaner.clean_combat_data() (historical sessions absent from disk are
+# preserved from the existing dataset, so a fresh recording can never replace
+# the factory dataset).
+# NOTE: 5c's factory_model.pkl fail-fast and 5b's dataset copy above remain
+# mandatory release gates and are intentionally untouched.
 # ---------------------------------------------------------------------------
-Write-Host "Bundling raw combat CSVs..."
-$RawCsvDstDir = Join-Path $ProjectRoot "dist/BlackDragon/data"
-$RawCsvs = Get-ChildItem -Path (Join-Path $ProjectRoot "data") -Filter "fatalis_combat_data_*.csv"
-if ($RawCsvs.Count -gt 0) {
-    Copy-Item $RawCsvs.FullName -Destination $RawCsvDstDir -Force
-    Write-Host "  Copied $($RawCsvs.Count) raw combat CSVs -> dist/BlackDragon/data/"
-} else {
-    Write-Warning "No raw combat CSVs found in data/ (factory rebuild insurance missing)"
-}
 
 # ---------------------------------------------------------------------------
 # 6. Summary + post-build smoke test
@@ -194,7 +190,6 @@ Write-Host "Build complete!" -ForegroundColor Green
 Write-Host "  dist/BlackDragon/BlackDragon.exe"
 Write-Host "  dist/BlackDragon/BlackDragonOverlay.exe  (merged)"
 Write-Host "  dist/BlackDragon/data/ML_Ready_Dataset.csv"
-Write-Host "  dist/BlackDragon/data/fatalis_combat_data_*.csv (factory raw sessions)"
 Write-Host "  dist/BlackDragon/models/fatalis_ai_model.pkl"
 Write-Host "  dist/BlackDragon/models/factory_model.pkl (immutable rollback copy)"
 Write-Host ""

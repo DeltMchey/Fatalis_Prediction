@@ -13,9 +13,14 @@
   - 模型加载失败时 self._model = None，predict() 返回空列表
 """
 
+import logging
+import traceback
+
 import joblib
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger("BlackDragon")
 
 
 # ================== P3.3B: 预测过滤常量（从 ai_engine.py 迁移）==================
@@ -65,6 +70,11 @@ class ActionPredictor:
         try:
             self._model = joblib.load(model_path)
         except Exception:
+            # 降级语义保留：_model=None → predict() 返回空列表（UI 显示"未加载"提示）。
+            # hotfix RC1: 此处曾是静默吞噬——Overlay 空白三连的第一层，必须留 ERROR 痕迹
+            # （写入 blackdragon.log，frozen 模式下位于 exe 目录，供用户回传定谳）。
+            logger.error("AI 模型加载失败: %s\n%s",
+                         model_path, traceback.format_exc())
             self._model = None
 
     @property

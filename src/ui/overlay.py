@@ -62,6 +62,10 @@ class OverlayUI:
     _DORMANT_TEXT: str = "未在虚黑城，雷达已休眠..."
     # Nova 预警文本
     _NOVA_WARNING_TEXT: str = "【飞天火预警】血线触发，请立刻准备规避！"
+    # 模型未加载提示（hotfix RC1: 替代永久空白——状态栏照常刷新但 ai_text 空白
+    # 曾使用户无法区分"模型挂了"与"无预测"；橙色警示，非红色以免与 Nova 预警混淆）
+    _MODEL_MISSING_TEXT: str = "⚠ AI 模型未加载"
+    _MODEL_MISSING_COLOR: list[int] = [255, 200, 100, 255]
 
     def __init__(
         self,
@@ -245,6 +249,7 @@ class OverlayUI:
 
         与 ai_engine.py 原 L431–L460 等价：
           - nova_warning → 红色预警文本
+          - 模型未加载 → 橙色固定提示（hotfix RC1）
           - 模型已加载 + 节流通过 + action != -1 → 绿色预测文本
           - 否则 → (None, None) 不更新
 
@@ -253,6 +258,10 @@ class OverlayUI:
         """
         if self._state.nova_warning:
             return (self._NOVA_WARNING_TEXT, [255, 100, 100, 255])
+
+        # hotfix RC1: 模型未加载 → 固定提示（Nova 预警优先级更高，置于其前判断）
+        if not self._predictor.is_loaded:
+            return (self._MODEL_MISSING_TEXT, self._MODEL_MISSING_COLOR)
 
         if (self._predictor.is_loaded
                 and time.time() - self._last_ai_time > _AI_THROTTLE_INTERVAL

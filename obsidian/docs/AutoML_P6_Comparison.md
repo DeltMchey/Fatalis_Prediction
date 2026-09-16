@@ -201,3 +201,46 @@ FLAML AutoML 默认 n_jobs = -1（automl.py: settings["n_jobs"] = get("n_jobs", 
 | G8 抽查 | `experiments/automl_20260915/reports/g8_bitwise_runA.json` + `g8_bitwise_runB.json`（脚本 `p6_g8_export_bitwise_check.py`，双候选均 PASS） |
 | 基线锚点 | `experiments/automl_20260915/reports/baseline_report.json` |
 | 生产模型 | `models/fatalis_ai_model.pkl` —— **全程零写入**（本轮所有导出走 `experiments/` 白名单路径） |
+
+## 9. P7 采纳与打包简报（2026-09-16，用户裁决后执行）
+
+> 用户裁决（P8 前置）：**Tier 2 正式采纳 Run B**（接受 122MB 一次性启动加载增量）；不做 lgbm 回退补训；本轮不合并 main、不 push、不发 release，产物供进游戏实测。
+
+### 9.1 胜出配置复现验证（报告 `reports/p7_repro_runB.json`）
+
+用 `p6_runB/run_manifest.json` 的 best_config 做确定性原生重训（不走 FLAML 搜索，n_jobs=1），与正式导出物在留出集缓存对比：
+
+- **逐位一致**：重训模型 vs 导出模型 predict_proba `max_abs_diff = 0.0`（488 行 × 46 类全量）；两次重训亦逐位一致（确定性证据）。
+- **四项指标与正式报告全部 +0.000pp**：top1 32.582% / top3_raw 66.189% / top3_filtered 65.369% / macro_top3 54.502%。
+- **排查过程中发现的复现要点（已入档）**：仅按 best_config + FLAML 注入项（objective=multi:softprob、enable_categorical、n_jobs=1）重训仍有偏差（top3 +0.6pp）；根因是 **FLAML `auto_augment` 稀有类增广**（计数 <20 的 14 个长尾类整行复制，train_80 从 1949 → 2175 行）+ `shuffle(random_state=1)`，改变类别先验（booster `base_score` 逐类向量不同）与训练行集。镜像该数据准备后逐位一致。
+- 顺带修复：`scripts/export_model.py` 备选重训路径对 xgboost 的签名过滤缺陷（`XGBClassifier.__init__` 为 `(objective, **kwargs)`，原白名单会把 best_config 全部滤掉，静默训练默认配置模型）——已修复并加 5 项回归测试（commit 93ebbca）。
+
+### 9.2 采纳执行
+
+- 新增 `scripts/adopt_model.py`（规划 5.3 第 2 层"显式采纳"独立入口；`export_model.py` 保持源码级生产隔离不变量）：门槛校验（报告 sha 一致性 / G4 / G1 拒绝线 / G5a 需显式 override）→ .bak 单代轮换 → 拷贝 → ActionPredictor 加载复核 → sidecar。
+- **采纳结果**：生产 `models/fatalis_ai_model.pkl` = Run B 导出物（sha256 `ed3db5f8…ce65b5f`，7.46MB）；`.bak` = 基线 LightGBM（`4d2344cf…84ef3e`，19.05MB，轮换前生产与旧 .bak 同 sha）；sidecar `models/fatalis_ai_model.pkl.meta.json` 记录来源 run / sha / 门槛数据 / 回滚程序 / G5a override 理由。
+- **采纳后短测**（生产路径实测，`reports/p7_post_adopt_production.json`）：六项指标与 Run B 正式报告全部 +0.0000pp；p95 4.70ms（≤10.7ms 门槛；与报告 4.31ms 差异为机器噪声）；全量 pytest 693 passed 在采纳后状态运行。
+- 采纳 commit `59b11c5` 独立可 revert（模型二进制 gitignored，revert 后需手工从 .bak 恢复生产文件）。
+
+### 9.3 P7 打包
+
+- **spec 变更**（双 spec 同步）：hiddenimports 增 `xgboost`/`xgboost.sklearn` + `src.model.features`/`src.model.label_decode`（pickle 动态引用，静态分析不可见）；binaries 显式收集 `xgboost/lib/xgboost.dll`；datas 增 `xgboost/VERSION`。`requirements.txt` 增 `xgboost==3.4.1` + `scipy==1.18.0`（传递依赖）。
+- **打包教训（两条，均由冻结探针发现）**：① 本环境 PyInstaller 6.21 无 xgboost hook，DLL（54.3MB，名为 `xgboost.dll` 而非 libxgboost.dll）不会被自动收集，需显式 binaries；② xgboost 3.x 在 import 时读取包内 `VERSION` 文件，缺它则 `FileNotFoundError` 直接崩——两者都已固化进 spec 注释。
+- **G6 判定：PASS** —— 预览包 `release/Fatalis-Prediction-automal-runB-preview.zip` = **162.2MB**（≤300MB 门槛；旧 v1.1.0 包 125.7MB，增量 +36.5MB ≈ xgboost.dll 压缩后体积 − 模型缩小 11.6MB）；dist 目录 286MB（未压缩口径）。
+- **冻结冒烟**：
+  - `BlackDragon.exe --pipeline` 退出码 0（data_cleaner → train_lgbm 冻结训练链路正常，训练指标与基线逐位一致 27.05%/60.25%；冒烟后已恢复 dist 内采纳模型）；
+  - 双 EXE 启动存活冒烟通过（Dashboard 10s 存活并自动拉起 Overlay 子进程；standalone Overlay 存活于游戏等待循环——模型加载点在游戏附着之后，无法无游戏触达）；
+  - **冻结推理链路探针**（一次性 onedir/onefile EXE，同 spec 面）：joblib.load 反序列化采纳模型（FeatureBuilder + LabelDecodedEstimator + XGBClassifier）+ xgboost.dll/VERSION 冻结加载 + 单行推理，输出与开发模式逐位一致（top1=0.364282，46 类）——**PASS**。
+- **干净机器（无 Python）冒烟**：本轮未执行（本机无法模拟），预览包解压即用，留作用户实测第一步。
+
+### 9.4 推理线程上限结论（§4.3/§7.1 建议的落地判定）
+
+**无需任何代码/环境变量改动**：Run B 导出物 pickle 内嵌 `n_jobs=1`（FLAML `--n-jobs 1` 经 config2params 写入 estimator），xgboost sklearn 包装在每次 fit/predict 时将其转为 `nthread=1`——生产推理天然单线程。实测佐证：Run B benchmark cpu_mean 2.3%（对比 Run A 的 657%）、采纳后短测 p95 4.70ms。§7.1 的"部署侧设 OMP/nthread 上限"建议对本模型自动满足；仅当未来换用非本管线产出的模型时需重新评估。
+
+### 9.5 用户进游戏实测指引
+
+1. 解压 `release/Fatalis-Prediction-automl-runB-preview.zip` 到任意目录（无需 Python）。
+2. 对照基线：同一场地连续狩猎中对比 Top-3 命中观感（离线口径预期 top3_filtered 58.8% → 65.4%）；注意 UI 置信度读数会整体略降（更保守但更准，见 `AutoML_RunB_Feature_Insights.md` §2）。
+3. 观察启动后首个预测出现的时延（模型加载 ~0.15s，进程内存稳态约 257MB）与游戏帧率无感知劣化（推理单线程、cpu ~2%）。
+4. 一键训练（--pipeline）仍走 LightGBM 旧管线，重训会覆盖预览包内模型（本包为预览件，无碍）；如需回到 Run B，重新解压即可。
+5. 回滚（如需）：`models/fatalis_ai_model.pkl.bak` 覆盖 `fatalis_ai_model.pkl`（仓库内 .bak 为基线；预览包内无 .bak，直接用旧 v1.1.0 包对比亦可）。

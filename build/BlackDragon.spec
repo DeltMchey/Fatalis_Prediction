@@ -15,26 +15,48 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(SPECPATH).parent if 'SPECPATH' in dir() else Path('.')
 
+# XGBoost runtime pieces are located via the installed package (build-time
+# requirement: xgboost in requirements.txt). Imported before datas/binaries
+# because both reference the package path.
+import xgboost as _xgb  # noqa: E402
+
 # ---- Bundled data resources ----
 datas = [
-    # AI model (17.6 MB) — used by ActionPredictor at runtime
+    # AI model (7.5 MB, P7 adopted Run B xgboost) — used by ActionPredictor at runtime
     (str(PROJECT_ROOT / 'models' / 'fatalis_ai_model.pkl'), 'models'),
+    # v3(F2): 出厂模型不可变副本 — 训练/备份轮换永不触碰；用户回滚 = 复制覆盖。
+    # 不放 .bak 位置：.bak 是运行时轮换链第一代（首次内容变化的训练即推进），
+    # "出厂"与"上一版"两个语义不能挤在同一文件。
+    (str(PROJECT_ROOT / 'models' / 'factory_model.pkl'), 'models'),
     # Training dataset (85.8 KB) — used by train_fatalis_ai() via --train / --pipeline mode
     (str(PROJECT_ROOT / 'data' / 'ML_Ready_Dataset.csv'), 'data'),
+    # XGBoost package data: VERSION is read by xgboost._c_api at import time
+    (str(Path(_xgb.__file__).resolve().parent / 'VERSION'), 'xgboost'),
 ]
 
 # ---- Native binaries ----
-binaries = []
+# XGBoost native DLL (54 MB): PyInstaller 6.21 bundles no xgboost hook, and
+# the DLL is ctypes-loaded from <pkg>/lib/xgboost.dll (xgboost/libpath.py),
+# invisible to import analysis — collect explicitly into xgboost/lib/.
+binaries = [
+    (str(Path(_xgb.__file__).resolve().parent / 'lib' / 'xgboost.dll'), 'xgboost/lib'),
+]
 
 # ---- Hidden imports ----
 # DearPyGui: DPG 2.x dynamically loads its C-extension backend
 # LightGBM: native lib_lightgbm.dll — must be collected explicitly
+#   (still needed: --train legacy frozen training walks the train_lgbm path)
+# XGBoost: native libxgboost.dll — collected by the PyInstaller hook once
+#   'xgboost' is listed here (P7: adopted production model is an xgboost pipeline;
+#   P8: --pipeline one-click training also retrains xgboost via production_backend)
 # sklearn/pandas: C-extension edge cases
 hiddenimports = [
     # DearPyGui
     'dearpygui._dearpygui',
     # LightGBM
     'lightgbm', 'lightgbm.basic', 'lightgbm.callback', 'lightgbm.sklearn',
+    # XGBoost (P7 adoption)
+    'xgboost', 'xgboost.sklearn',
     # scikit-learn edge cases
     'sklearn.utils._typedefs', 'sklearn.utils._vector_sentinel',
     # pandas internals
@@ -43,7 +65,16 @@ hiddenimports = [
     'pymem', 'pymem.process',
     # Project packages (Dashboard process)
     'src.core.state_tracker', 'src.core.memory_reader',
-    'src.model.predictor', 'src.data.recorder',
+    'src.model.predictor',
+    # P7: classes referenced only via pickle inside the adopted model pipeline
+    #   (joblib.load unpickles FeatureBuilder / LabelDecodedEstimator dynamically)
+    'src.model.features', 'src.model.label_decode',
+    # P8: Run B one-click training backend (dynamically imported in launch --pipeline)
+    'src.model.production_backend',
+    # v3(F3): shared backup-chain module (imported inside data_cleaner /
+    # production_backend at runtime)
+    'src.core.backup_chain',
+    'src.data.recorder',
     'src.ui.fonts',
     'src.app.config', 'src.app.controller', 'src.app.game_service',
     'src.dashboard.main_window', 'src.dashboard.status_bar',

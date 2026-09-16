@@ -1,0 +1,65 @@
+{
+ "adopted_at": "2026-09-16T09:37:45",
+ "production_model": "models\\fatalis_ai_model.pkl",
+ "model_sha256": "ed3db5f81f9720cda3f6a07bd314cc95fa60413e9c434d438f65387f0ce65b5f",
+ "source_export": "experiments\\fatalis_ai_model_automl_p6runB.pkl",
+ "source_run_dir": "experiments\\automl_20260915\\p6_runB",
+ "benchmark_report": "experiments\\automl_20260915\\reports\\candidate_runB.json",
+ "previous_production_sha256": "4d2344cf90dfc8736d6a69ac5a4b161158781a2b6f7aa4735270a535de84ef3e",
+ "rollback": {
+  "backup": "models\\fatalis_ai_model.pkl.bak",
+  "rotated": true,
+  "procedure": "拷贝 fatalis_ai_model.pkl.bak 覆盖 fatalis_ai_model.pkl 后冻结冒烟"
+ },
+ "gates": {
+  "g1_top3_raw": 0.6618852459016393,
+  "g1_delta_pp_vs_baseline": null,
+  "g2_top1": 0.32581967213114754,
+  "g4_model_mb": 7.461963653564453,
+  "g5a_load_rss_delta_mb": 122.0,
+  "g5a_overridden": true,
+  "g5a_override_reason": "Tier 2 人工评审采纳（用户 2026-09-16 裁决）：122MB 为 xgboost booster 一次性反序列化加载增量，非持续占用（稳态 256.8MB ≤ 预算 316.6MB，漂移 +0.09%），效果收益 top3 +5.94pp"
+ },
+ "model_info": {
+  "best_estimator": "xgboost",
+  "best_config": {
+   "n_estimators": 190,
+   "max_leaves": 4,
+   "min_child_weight": 0.019429439515313975,
+   "learning_rate": 0.07796774685886149,
+   "subsample": 0.9457311987921387,
+   "colsample_bylevel": 1.0,
+   "colsample_bytree": 0.7781106489263098,
+   "reg_alpha": 0.0009765625,
+   "reg_lambda": 0.042063643624928454,
+   "max_depth": 4
+  },
+  "feature_run": {
+   "derived": true,
+   "n_bins": 8
+  },
+  "feature_names": [
+   "distance",
+   "relative_angle",
+   "posture",
+   "previous_action",
+   "phase",
+   "is_enraged",
+   "angle_sin",
+   "angle_cos",
+   "distance_bin",
+   "distance_x_enraged",
+   "posture_x_phase",
+   "prev_action_freq"
+  ],
+  "best_cv_top3_acc": 0.7250574712643678
+ },
+ "post_adopt_check": {
+  "predictor_loaded": true,
+  "probe_result_len": 3
+ },
+ "env": {
+  "python": "3.12.6",
+  "os": "Windows-11-10.0.26200-SP0"
+ }
+}

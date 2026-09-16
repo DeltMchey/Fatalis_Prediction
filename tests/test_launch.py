@@ -171,17 +171,20 @@ class TestTrainMode:
 
 
 # =============================================================================
-# v1.1: --pipeline 训练入口（data_cleaner → train_lgbm）
+# v1.1: --pipeline 训练入口（data_cleaner → Run B 后端 production_backend）
+#   P8 起 --pipeline 路由到 src.model.production_backend.train_runb_backend；
+#   train_lgbm 保留为 --train（legacy）入口。
 # =============================================================================
 
 class TestPipelineMode:
     def test_main_handles_pipeline_flag(self, monkeypatch):
-        """--pipeline flag → 调用 clean_combat_data() + train_fatalis_ai()，不启动 Dashboard。"""
+        """--pipeline flag → 调用 clean_combat_data() + train_runb_backend()，不启动 Dashboard。"""
         import sys
         mock_clean = MagicMock()
         mock_train = MagicMock()
         monkeypatch.setattr("data_cleaner.clean_combat_data", mock_clean)
-        monkeypatch.setattr("train_lgbm.train_fatalis_ai", mock_train)
+        monkeypatch.setattr(
+            "src.model.production_backend.train_runb_backend", mock_train)
         old_argv = sys.argv
         try:
             sys.argv = ["BlackDragon.exe", "--pipeline"]
@@ -195,7 +198,8 @@ class TestPipelineMode:
         """--pipeline 应从 sys.argv 中移除。"""
         import sys
         monkeypatch.setattr("data_cleaner.clean_combat_data", MagicMock())
-        monkeypatch.setattr("train_lgbm.train_fatalis_ai", MagicMock())
+        monkeypatch.setattr(
+            "src.model.production_backend.train_runb_backend", MagicMock())
         old_argv = sys.argv
         try:
             sys.argv = ["BlackDragon.exe", "--pipeline", "extra"]
@@ -210,3 +214,88 @@ class TestPipelineMode:
         src = inspect.getsource(launch.main)
         assert '"--pipeline" in sys.argv' in src
         assert "clean_combat_data" in src
+        assert "train_runb_backend" in src
+
+
+# =============================================================================
+# Hotfix --selftest 入口（Dashboard EXE 构建冒烟）
+# =============================================================================
+
+import types
+
+
+def _fake_runtime_modules(monkeypatch, predictor):
+    """替换 launch._selftest 函数内动态 import 的四个模块。"""
+    cleaner = types.ModuleType("data_cleaner")
+    cleaner.clean_combat_data = MagicMock()
+    backend = types.ModuleType("src.model.production_backend")
+    backend.train_runb_backend = MagicMock()
+    pred_mod = types.ModuleType("src.model.predictor")
+    pred_mod.ActionPredictor = MagicMock(return_value=predictor)
+    cfg_mod = types.ModuleType("src.app.config")
+    cfg_mod.resolve_runtime_path = lambda p: __import__("pathlib").Path(
+        r"C:\fake_exe_dir") / p
+    monkeypatch.setitem(sys.modules, "data_cleaner", cleaner)
+    monkeypatch.setitem(sys.modules, "src.model.production_backend", backend)
+    monkeypatch.setitem(sys.modules, "src.model.predictor", pred_mod)
+    monkeypatch.setitem(sys.modules, "src.app.config", cfg_mod)
+
+
+class TestSelftestEntry:
+    def test_selftest_function_exists(self):
+        """launch 模块提供可调用的 _selftest。"""
+        assert callable(getattr(launch, "_selftest", None))
+
+    def test_main_dispatches_selftest_before_everything(self, monkeypatch):
+        """main() 以 SystemExit 分发 --selftest（先于 --pipeline / bootstrap）。"""
+        monkeypatch.setattr(launch, "_selftest", MagicMock(return_value=5))
+        old_argv = sys.argv
+        try:
+            sys.argv = ["BlackDragon.exe", "--selftest"]
+            with pytest.raises(SystemExit) as excinfo:
+                launch.main()
+            assert excinfo.value.code == 5
+            assert "--selftest" not in sys.argv  # 已消费
+        finally:
+            sys.argv = old_argv
+
+    def test_selftest_passes_when_all_checks_ok(self, monkeypatch, capsys):
+        """动态 import + 模型加载 + 推理正常 → 0。"""
+        pred = MagicMock()
+        pred.is_loaded = True
+        pred.predict.return_value = [(37, 0.5)]
+        _fake_runtime_modules(monkeypatch, pred)
+
+        assert launch._selftest() == 0
+        out = capsys.readouterr().out
+        assert "PASS" in out
+        assert "import" in out  # 动态依赖检查输出
+
+    def test_selftest_fails_when_dynamic_import_broken(self, monkeypatch, capsys):
+        """动态依赖 import 失败 → 1（hiddenimports 漏打包即在此暴露）。"""
+        pred = MagicMock()
+        _fake_runtime_modules(monkeypatch, pred)
+        # 破坏其中一个动态 import
+        monkeypatch.setitem(sys.modules, "src.model.production_backend", None)
+
+        assert launch._selftest() == 1
+        assert "FAIL" in capsys.readouterr().out
+
+    def test_selftest_fails_when_model_not_loaded(self, monkeypatch, capsys):
+        """模型加载失败 → 1。"""
+        pred = MagicMock()
+        pred.is_loaded = False
+        _fake_runtime_modules(monkeypatch, pred)
+
+        assert launch._selftest() == 1
+        assert "FAIL" in capsys.readouterr().out
+
+    def test_selftest_fails_when_predict_raises(self, monkeypatch, capsys):
+        """推理管线抛异常 → 1（不向上传播）。"""
+        pred = MagicMock()
+        pred.is_loaded = True
+        pred.predict.side_effect = RuntimeError("boom")
+        _fake_runtime_modules(monkeypatch, pred)
+
+        assert launch._selftest() == 1
+        assert "FAIL" in capsys.readouterr().out

@@ -7,6 +7,15 @@ Available fixtures:
   - temp_data_dir: temporary data subdirectory that is guaranteed to exist
 """
 
+import os
+
+# matplotlib 后端必须在任何 matplotlib 核心模块导入之前确定。
+# sklearn/xgboost 的导入链会拉起 matplotlib 核心；若核心先于本变量导入，
+# pyplot 的惰性 backend 解析将忽略后设的 env 而落到 TkAgg——测试期弹 GUI
+# 窗口并偶发 TclError（invalid command name "tcl_findLibrary"）。
+# conftest 在所有测试模块之前导入，是保证顺序的唯一可靠挂载点。
+os.environ.setdefault("MPLBACKEND", "Agg")
+
 import pytest
 import pandas as pd
 import numpy as np

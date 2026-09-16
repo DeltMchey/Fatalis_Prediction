@@ -316,13 +316,37 @@ class TestCorruptedCsv:
 
 class TestOutputFormat:
     def test_output_columns(self, pipeline_workdir):
-        """输出列顺序为 ML 就绪数据集 7 列标准顺序。"""
+        """输出列为 ML 就绪数据集标准顺序（7 原有列 + P1 新增 source_session 末位）。"""
         df = run_cleaner(pipeline_workdir, make_rows([37, 53]))
         assert df is not None
         assert df.columns.tolist() == [
             "distance", "relative_angle", "posture",
             "previous_action", "phase", "is_enraged", "next_action",
+            "source_session",
         ]
+
+    def test_source_session_column(self, pipeline_workdir):
+        """P1(AutoML 实验): source_session = 源战斗 CSV 文件名（不含路径）。
+
+        用途：StratifiedGroupKFold 分组 CV 对照（防泄漏稳健性检查）。
+        """
+        df = run_cleaner(pipeline_workdir, make_rows([37, 53]))
+        assert df is not None
+        assert (df["source_session"] == "fatalis_combat_data_raw.csv").all()
+
+    def test_source_session_distinguishes_files(self, pipeline_workdir):
+        """两个源 CSV → 各自转换对带各自 source_session 值。"""
+        data_dir = pipeline_workdir / "data"
+        write_combat_csv(data_dir / "fatalis_combat_data_a.csv", make_rows([37, 53]))
+        write_combat_csv(data_dir / "fatalis_combat_data_b.csv", make_rows([81, 129]))
+
+        data_cleaner.clean_combat_data()
+
+        df = pd.read_csv(data_dir / "ML_Ready_Dataset.csv")
+        sessions = set(df["source_session"])
+        assert sessions == {
+            "fatalis_combat_data_a.csv", "fatalis_combat_data_b.csv",
+        }
 
     def test_multiple_transitions_count(self, pipeline_workdir):
         """N 个不同动作 → N-1 个转换对（全为战斗动作时）。"""
@@ -378,3 +402,137 @@ class TestUnknownActionFiltering:
         assert "未知动作" in captured.out
         assert "117" in captured.out
         assert "118" in captured.out
+
+
+# =============================================================================
+# 12. v3(F1) 合并语义 — 防止数据集被在场 CSV 静默替换
+# =============================================================================
+
+class TestMergeSemantics:
+    """事故修复：发行包不带全量 CSV 时，点一次训练不得丢弃历史会话数据。
+
+    语义：写盘前读现有数据集，保留 source_session 不在本次 CSV 集合中的
+    历史行，再追加本次新提取样本（同名会话以重新提取为准）。
+    """
+
+    def test_full_csvs_present_zero_change(self, pipeline_workdir):
+        """全量 CSV 在场（=仓库 dev 环境）→ 输出与旧版逐字节零变化。
+
+        连续两次运行（CSV 集合不变）：第二次不追加任何历史行，
+        输出文件内容与第一次完全一致。
+        """
+        data_dir = pipeline_workdir / "data"
+        write_combat_csv(data_dir / "fatalis_combat_data_a.csv",
+                         make_rows([37, 53, 81]))
+        write_combat_csv(data_dir / "fatalis_combat_data_b.csv",
+                         make_rows([81, 129, 138]))
+
+        data_cleaner.clean_combat_data()
+        first = (data_dir / "ML_Ready_Dataset.csv").read_bytes()
+
+        data_cleaner.clean_combat_data()
+        second = (data_dir / "ML_Ready_Dataset.csv").read_bytes()
+
+        assert first == second, "全量 CSV 在场时第二次运行输出必须零变化"
+        df = pd.read_csv(data_dir / "ML_Ready_Dataset.csv")
+        assert len(df) == 4          # 2 会话 × 2 转换，无重复追加
+
+    def test_missing_csv_preserves_history_sessions(self, pipeline_workdir,
+                                                    capsys):
+        """历史会话 CSV 缺席（事故场景）→ 其数据从现有数据集保留。"""
+        data_dir = pipeline_workdir / "data"
+        csv_a = data_dir / "fatalis_combat_data_a.csv"
+        csv_b = data_dir / "fatalis_combat_data_b.csv"
+        write_combat_csv(csv_a, make_rows([37, 53, 81]))    # 2 转换
+        write_combat_csv(csv_b, make_rows([81, 129, 138]))  # 2 转换
+
+        data_cleaner.clean_combat_data()
+        df1 = pd.read_csv(data_dir / "ML_Ready_Dataset.csv")
+        assert len(df1) == 4
+
+        # 事故场景：A 的 CSV 被清理/未随包，只新增 C
+        csv_a.unlink()
+        write_combat_csv(data_dir / "fatalis_combat_data_c.csv",
+                         make_rows([37, 53]))               # 1 转换
+
+        data_cleaner.clean_combat_data()
+        df2 = pd.read_csv(data_dir / "ML_Ready_Dataset.csv")
+
+        # A 的 2 行从历史数据集保留 + B 重提取 2 行 + C 新增 1 行
+        assert len(df2) == 5, "历史会话 A 的数据必须被保留，不得被替换丢失"
+        sessions = set(df2["source_session"])
+        assert sessions == {"fatalis_combat_data_a.csv",
+                            "fatalis_combat_data_b.csv",
+                            "fatalis_combat_data_c.csv"}
+        # A 的历史行内容与第一次运行一致（next_action 集合）
+        a_rows = df2[df2["source_session"] == "fatalis_combat_data_a.csv"]
+        assert sorted(a_rows["next_action"]) == sorted(
+            df1[df1["source_session"] == "fatalis_combat_data_a.csv"]
+            ["next_action"])
+        captured = capsys.readouterr()
+        assert "已保留 1 个历史会话的 2 行" in captured.out
+
+    def test_renamed_session_reextracted_not_duplicated(self,
+                                                        pipeline_workdir):
+        """同名会话 CSV 在场 → 以重新提取为准（旧行替换，不重复追加）。"""
+        data_dir = pipeline_workdir / "data"
+        write_combat_csv(data_dir / "fatalis_combat_data_a.csv",
+                         make_rows([37, 53, 81]))
+
+        data_cleaner.clean_combat_data()
+        assert len(pd.read_csv(data_dir / "ML_Ready_Dataset.csv")) == 2
+
+        # 同名 CSV 内容变化（多一个动作）→ 重提取覆盖旧 2 行
+        write_combat_csv(data_dir / "fatalis_combat_data_a.csv",
+                         make_rows([37, 53, 81, 129]))
+        data_cleaner.clean_combat_data()
+
+        df = pd.read_csv(data_dir / "ML_Ready_Dataset.csv")
+        assert len(df) == 3, "同名会话应以重新提取为准，不得追加重复行"
+
+    def test_ancient_dataset_without_source_session_kept_in_backup(
+            self, pipeline_workdir, capsys):
+        """远古格式数据集（无 source_session 列）→ 无法合并，警告 + 备份保留。"""
+        data_dir = pipeline_workdir / "data"
+        # 构造无 source_session 的旧格式数据集
+        pd.DataFrame({
+            "distance": [100.0], "relative_angle": [0.0], "posture": [1],
+            "previous_action": [37], "phase": [1], "is_enraged": [0],
+            "next_action": [53],
+        }).to_csv(data_dir / "ML_Ready_Dataset.csv", index=False)
+
+        write_combat_csv(data_dir / "fatalis_combat_data_a.csv",
+                         make_rows([37, 53]))
+        data_cleaner.clean_combat_data()
+
+        captured = capsys.readouterr()
+        assert "无法合并历史" in captured.out
+        # 旧内容保留在 .bak（两代链第一代）
+        assert (data_dir / "ML_Ready_Dataset.csv.bak").exists()
+        df = pd.read_csv(data_dir / "ML_Ready_Dataset.csv")
+        assert len(df) == 1  # 仅本次提取
+
+    def test_backup_chain_and_same_sha_skip(self, pipeline_workdir):
+        """v3(F3) 数据集侧备份链：内容变化推进两代；内容相同跳过轮换。"""
+        data_dir = pipeline_workdir / "data"
+        dataset = data_dir / "ML_Ready_Dataset.csv"
+        bak = data_dir / "ML_Ready_Dataset.csv.bak"
+        bak2 = data_dir / "ML_Ready_Dataset.csv.bak2"
+
+        csv_a = data_dir / "fatalis_combat_data_a.csv"
+        write_combat_csv(csv_a, make_rows([37, 53]))
+        data_cleaner.clean_combat_data()
+        assert dataset.exists() and not bak.exists()   # 首写无备份
+
+        # 内容变化（加动作）→ .bak 推进
+        write_combat_csv(csv_a, make_rows([37, 53, 81]))
+        data_cleaner.clean_combat_data()
+        v1 = dataset.read_bytes()
+        assert bak.exists()
+        first_bak = bak.read_bytes()
+
+        # 数据未变 → 同 sha 跳过：.bak 不被推进（自吞防护）
+        data_cleaner.clean_combat_data()
+        assert dataset.read_bytes() == v1
+        assert bak.read_bytes() == first_bak
+        assert not bak2.exists()

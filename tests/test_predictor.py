@@ -100,6 +100,35 @@ class TestModelLoading:
         predictor = ActionPredictor(str(bad_path))
         assert predictor.is_loaded is False
 
+    # ── Hotfix RC1: 加载失败必须留 ERROR 痕迹（曾经三层静默吞噬） ──
+
+    def test_missing_file_logs_error_with_path(self, tmp_path, caplog):
+        """缺失文件 → ERROR 日志包含模型路径（回传日志可定谳）。"""
+        import logging as _logging
+        missing = str(tmp_path / "nonexistent.pkl")
+        with caplog.at_level(_logging.ERROR, logger="BlackDragon"):
+            ActionPredictor(missing)
+        assert any("AI 模型加载失败" in r.message for r in caplog.records)
+        assert missing in caplog.text
+
+    def test_corrupted_file_logs_error_with_traceback(self, tmp_path, caplog):
+        """损坏文件 → ERROR 日志含 traceback（区分 FileNotFoundError / 反序列化失败）。"""
+        import logging as _logging
+        bad_path = tmp_path / "bad.pkl"
+        bad_path.write_bytes(b"not a valid pickle")
+        with caplog.at_level(_logging.ERROR, logger="BlackDragon"):
+            ActionPredictor(str(bad_path))
+        assert any("AI 模型加载失败" in r.message for r in caplog.records)
+        assert "Traceback" in caplog.text
+
+    def test_successful_load_logs_no_error(self, tmp_path, caplog):
+        """成功加载 → 无 ERROR 日志（避免噪音）。"""
+        import logging as _logging
+        model_path = train_mini_model(tmp_path)
+        with caplog.at_level(_logging.ERROR, logger="BlackDragon"):
+            ActionPredictor(model_path)
+        assert not [r for r in caplog.records if r.levelno >= 40]
+
 
 # =============================================================================
 # 2. Mini 模型端到端预测

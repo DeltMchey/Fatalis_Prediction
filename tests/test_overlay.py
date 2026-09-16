@@ -331,12 +331,48 @@ class TestPredictionThrottle:
 # =============================================================================
 
 class TestPredictorNotLoaded:
+    """Hotfix RC1: 模型未加载 → 固定橙色提示（替代永久空白），且不调用 predict。"""
+
     def test_unloaded_model_skips_prediction(self, overlay, mock_predictor, buffer):
+        """未加载 → predict 不被调用（降级语义不变）。"""
+        mock_predictor.is_loaded = False
+        buffer.append(37)
+        overlay._compute_frame()
+        mock_predictor.predict.assert_not_called()
+
+    def test_unloaded_model_shows_hint_text(self, overlay, mock_predictor, buffer):
+        """未加载 → ai_text 为固定提示（不再是 None/空白）。"""
         mock_predictor.is_loaded = False
         buffer.append(37)
         display = overlay._compute_frame()
-        assert display["ai_text"] is None
-        mock_predictor.predict.assert_not_called()
+        assert display["ai_text"] == "⚠ AI 模型未加载"
+
+    def test_unloaded_model_hint_color_is_warning_orange(
+            self, overlay, mock_predictor, buffer):
+        """提示颜色为橙色警示（区别于 Nova 红色 / 预测绿色）。"""
+        mock_predictor.is_loaded = False
+        buffer.append(37)
+        display = overlay._compute_frame()
+        assert display["ai_color"] == [255, 200, 100, 255]
+
+    def test_unloaded_hint_overwritten_by_dormant(self, overlay, mock_predictor,
+                                                  mock_reader):
+        """zone 非 Fatalis → 休眠文本优先（ai_text 清空，不叠加提示）。"""
+        mock_predictor.is_loaded = False
+        mock_reader.check_zone.return_value = 0  # 非 Fatalis 区域
+        display = overlay._compute_frame()
+        assert display["ai_text"] == ""
+        assert "AI 模型未加载" not in display["state_text"]
+
+    def test_nova_warning_takes_priority_over_unloaded_hint(
+            self, overlay, mock_predictor, mock_reader, buffer):
+        """Nova 预警优先级高于未加载提示（战斗关键信息不打折）。"""
+        mock_predictor.is_loaded = False
+        mock_reader.read_monster_hp.side_effect = [0.90, 0.20]  # 血线骤降触发
+        buffer.append(37)
+        overlay._compute_frame()  # 初始化基线血线
+        display = overlay._compute_frame()  # 触发 nova_warning
+        assert display["ai_text"] == overlay._NOVA_WARNING_TEXT
 
 
 # =============================================================================

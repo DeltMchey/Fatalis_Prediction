@@ -1,0 +1,16 @@
+# BlackDragon — AutoML experiment dependencies (dev-only, NOT in EXE runtime)
+#
+# Install: pip install -r requirements-experiment.txt
+#
+# 实验环境专用依赖（AutoML_Experiment_Plan P0）。
+# 运行时零新增依赖原则：本文件不进 requirements.txt，不进 PyInstaller 包。
+# 仅当 P6 决策采纳且胜者为非 sklearn/lgbm 家族（即 xgboost）时，
+# xgboost 才另行评审进入 requirements.txt（见规划 5.4 / P7）。
+#
+# 钉版环境基线：Python 3.12.6 / pandas 3.0.2 / numpy 2.4.4 / scikit-learn 1.8.0
+# / lightgbm 4.6.0 / joblib 1.5.3（Windows 原生）
+# P0 冒烟报告：experiments/automl_20260915_2332/smoke_report.md（7/7 通过）
+
+flaml==2.6.0
+xgboost==3.4.1
+psutil==7.2.2

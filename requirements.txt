@@ -13,3 +13,7 @@ numpy==2.4.4
 pandas==3.0.2
 Pymem==1.14.0
 scikit-learn==1.8.0
+# P7 采纳（AutoML Run B）：生产模型为 xgboost pipeline（libxgboost.dll 随包分发）；
+# scipy 为 xgboost 的传递依赖。依据规划 5.4/P7：xgboost 胜者采纳后进入运行时依赖。
+scipy==1.18.0
+xgboost==3.4.1

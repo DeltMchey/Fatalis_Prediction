@@ -34,16 +34,21 @@ Monster Hunter World players fighting Fatalis on PC. Requires the game to be run
    - AI Top-3 predictions (green) for the next attack
 5. To train/retrain the model from recorded data:
    ```
-   python launch.py --pipeline    # 一键数据清洗 + 模型训练（v1.1）
+   python launch.py --pipeline    # 一键训练（v1.2）：清洗合并 → Run B XGBoost 配置重训，几秒完成
    ```
    Or via the Dashboard: click 「模型训练」 button in the Training tab.
+   New recordings are merged with the shipped dataset (recording one fight no
+   longer replaces it); training prints a data summary + warnings and logs to
+   `models/train_*.log`. Rollback: `factory_model.pkl` / `.bak` / `.bak2`.
 
 ### Windows EXE Distribution
 
-1. Download `BlackDragon-v1.1.0-windows.zip`
+1. Download `Fatalis-Prediction-v1.2.0-windows.zip`
 2. Extract to any folder
 3. Double-click `BlackDragon.exe` — Dashboard appears, Overlay auto-starts
 4. No Python environment required — everything bundled
+5. Diagnostics: `BlackDragon.exe --selftest` / `BlackDragonOverlay.exe --selftest`
+   (exit 0 = path resolution + model load + one prediction OK)
 
 ## Constraints
 
@@ -57,6 +62,7 @@ Monster Hunter World players fighting Fatalis on PC. Requires the game to be run
 - No multi-monster support (hardcoded to find monster with HP > 500 in first 10 slots)
 - No multi-player party size tracking
 - No weapon-type-specific predictions
-- Current model is a single LightGBM classifier (no ensemble)
-- No model version management (single hardcoded filename)
+- Current model is a single XGBoost pipeline (no ensemble), trained for one MHW build's move set
+- Model files rotate through a two-generation backup chain + immutable factory copy; no multi-model registry
 - Unknown actions (not in `ACTION_DB`) are filtered during pipeline execution with a warning — legitimate new actions must be added to `src/config/actions.py`
+- Model quality is bound to the training data volume (~19 factory sessions; heavy reliance on user recordings to grow)

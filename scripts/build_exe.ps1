@@ -40,7 +40,7 @@ if (-not (Test-Path $Python)) {
 # ---------------------------------------------------------------------------
 # 0. Preconditions
 # ---------------------------------------------------------------------------
-Write-Host "[1/6] Verifying PyInstaller in venv..." -ForegroundColor Cyan
+Write-Host "[1/7] Verifying PyInstaller in venv..." -ForegroundColor Cyan
 try {
     & $Python -m PyInstaller --version 2>&1 | Out-Null
 } catch {
@@ -52,7 +52,7 @@ try {
 # 1. Verify tests pass (unless skipped)
 # ---------------------------------------------------------------------------
 if (-not $SkipTests) {
-    Write-Host "[2/6] Running test suite..." -ForegroundColor Cyan
+    Write-Host "[2/7] Running test suite..." -ForegroundColor Cyan
     $env:MPLBACKEND = "Agg"
     & $Python -m pytest tests/ -q
     if ($LASTEXITCODE -ne 0) {
@@ -60,26 +60,26 @@ if (-not $SkipTests) {
         exit 1
     }
 } else {
-    Write-Host "[2/6] Skipping tests (-SkipTests)" -ForegroundColor Yellow
+    Write-Host "[2/7] Skipping tests (-SkipTests)" -ForegroundColor Yellow
 }
 
 # ---------------------------------------------------------------------------
 # 2. Clean previous build (if requested)
 # ---------------------------------------------------------------------------
 if ($Clean) {
-    Write-Host "[3/6] Cleaning previous build artifacts..." -ForegroundColor Cyan
+    Write-Host "[3/7] Cleaning previous build artifacts..." -ForegroundColor Cyan
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue build/BlackDragon
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue build/BlackDragonOverlay
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue dist/BlackDragon
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue dist/BlackDragonOverlay
 } else {
-    Write-Host "[3/6] Keeping previous build artifacts (use -Clean to clean)" -ForegroundColor Yellow
+    Write-Host "[3/7] Keeping previous build artifacts (use -Clean to clean)" -ForegroundColor Yellow
 }
 
 # ---------------------------------------------------------------------------
 # 3. Build Dashboard EXE (BlackDragon.exe)
 # ---------------------------------------------------------------------------
-Write-Host "[4/6] Building BlackDragon.exe (Dashboard)..." -ForegroundColor Cyan
+Write-Host "[4/7] Building BlackDragon.exe (Dashboard)..." -ForegroundColor Cyan
 # PyInstaller writes INFO to stderr; PowerShell 5.1 treats stderr as error
 # under $ErrorActionPreference=Stop. Temporarily relax for the native call.
 $prevEAP = $ErrorActionPreference
@@ -94,7 +94,7 @@ if ($LASTEXITCODE -ne 0) {
 # ---------------------------------------------------------------------------
 # 4. Build Overlay EXE (BlackDragonOverlay.exe)
 # ---------------------------------------------------------------------------
-Write-Host "[5/6] Building BlackDragonOverlay.exe (Overlay)..." -ForegroundColor Cyan
+Write-Host "[5/7] Building BlackDragonOverlay.exe (Overlay)..." -ForegroundColor Cyan
 $prevEAP = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 & $Python -m PyInstaller build/BlackDragonOverlay.spec --noconfirm 2>$null
@@ -107,7 +107,7 @@ if ($LASTEXITCODE -ne 0) {
 # ---------------------------------------------------------------------------
 # 5. Merge: copy Overlay exe into Dashboard dist (same directory)
 # ---------------------------------------------------------------------------
-Write-Host "[6/6] Merging EXEs into dist/BlackDragon/..." -ForegroundColor Cyan
+Write-Host "[6/7] Merging EXEs into dist/BlackDragon/..." -ForegroundColor Cyan
 $OverlaySrc = Join-Path $ProjectRoot "dist/BlackDragonOverlay/BlackDragonOverlay.exe"
 $OverlayDst = Join-Path $ProjectRoot "dist/BlackDragon/BlackDragonOverlay.exe"
 if (Test-Path $OverlaySrc) {
@@ -152,17 +152,97 @@ if (Test-Path $ModelSrc) {
 }
 
 # ---------------------------------------------------------------------------
-# 6. Summary
+# 5d. v3(F2): Surface the immutable factory model next to the exe.
+# models/factory_model.pkl is the shipped-model rollback copy. The training /
+# backup-rotation machinery NEVER touches it (the .bak/.bak2 chain operates on
+# fatalis_ai_model.pkl only), so it stays byte-identical to the shipped model
+# no matter how many times the user retrains.
+# ---------------------------------------------------------------------------
+Write-Host "Surfacing factory model..."
+$FactorySrc = Join-Path $ProjectRoot "dist/BlackDragon/_internal/models/factory_model.pkl"
+$FactoryDst = Join-Path $ProjectRoot "dist/BlackDragon/models/factory_model.pkl"
+if (Test-Path $FactorySrc) {
+    Copy-Item $FactorySrc $FactoryDst -Force
+    Write-Host "Factory model copied to dist/BlackDragon/models (rollback copy)"
+} else {
+    Write-Error "Factory model not found at $FactorySrc (v3 release requires it)"
+    exit 1
+}
+
+# ---------------------------------------------------------------------------
+# 5e. v3(F2): Bundle the raw combat CSVs (~11 MB) next to the dataset.
+# Insurance: with the raw sessions shipped, data_cleaner can rebuild the
+# factory dataset from scratch even if ML_Ready_Dataset.csv is deleted or
+# corrupted. The v3 merge semantics also make a full-CSV rebuild
+# byte-identical to the factory dataset (zero-change guarantee).
+# ---------------------------------------------------------------------------
+Write-Host "Bundling raw combat CSVs..."
+$RawCsvDstDir = Join-Path $ProjectRoot "dist/BlackDragon/data"
+$RawCsvs = Get-ChildItem -Path (Join-Path $ProjectRoot "data") -Filter "fatalis_combat_data_*.csv"
+if ($RawCsvs.Count -gt 0) {
+    Copy-Item $RawCsvs.FullName -Destination $RawCsvDstDir -Force
+    Write-Host "  Copied $($RawCsvs.Count) raw combat CSVs -> dist/BlackDragon/data/"
+} else {
+    Write-Warning "No raw combat CSVs found in data/ (factory rebuild insurance missing)"
+}
+
+# ---------------------------------------------------------------------------
+# 6. Summary + post-build smoke test
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host "Build complete!" -ForegroundColor Green
 Write-Host "  dist/BlackDragon/BlackDragon.exe"
 Write-Host "  dist/BlackDragon/BlackDragonOverlay.exe  (merged)"
 Write-Host "  dist/BlackDragon/data/ML_Ready_Dataset.csv"
+Write-Host "  dist/BlackDragon/data/fatalis_combat_data_*.csv (factory raw sessions)"
 Write-Host "  dist/BlackDragon/models/fatalis_ai_model.pkl"
+Write-Host "  dist/BlackDragon/models/factory_model.pkl (immutable rollback copy)"
+Write-Host ""
+
+# ---------------------------------------------------------------------------
+# 7. Post-build smoke test (hotfix RC2 guard): run both EXEs' --selftest.
+#    Replaces the old "stays alive for 10s" style verification — selftest
+#    exercises frozen path resolution -> model load -> one predict inside
+#    the REAL EXE process (same pymem/DPG/xgboost import order as prod).
+#    Windowed EXEs have no console stdout: the verdict is the exit code;
+#    details land in <exe_dir>/blackdragon.log (frozen-aware since hotfix).
+#    Overlay selftest intentionally runs with CWD = TEMP (not the exe dir)
+#    to prove frozen path resolution no longer depends on CWD (RC2 trigger:
+#    user launching from inside an archive tool / wrong directory).
+# ---------------------------------------------------------------------------
+Write-Host "[7/7] Post-build selftest smoke..." -ForegroundColor Cyan
+
+$DashboardExe = Join-Path $ProjectRoot "dist/BlackDragon/BlackDragon.exe"
+$OverlayExe = Join-Path $ProjectRoot "dist/BlackDragon/BlackDragonOverlay.exe"
+$SmokeLog = Join-Path $ProjectRoot "dist/BlackDragon/blackdragon.log"
+
+# NOTE: both EXEs are windowed (console=False). PowerShell's `& exe` call does
+# NOT wait for GUI-subsystem processes — $LASTEXITCODE would keep its stale
+# value and the verdict would be a false PASS. Start-Process -Wait -PassThru
+# is the only reliable way to obtain the real exit code.
+$DashProc = Start-Process -FilePath $DashboardExe -ArgumentList "--selftest" `
+    -WorkingDirectory $ProjectRoot -Wait -PassThru
+if ($DashProc.ExitCode -ne 0) {
+    Write-Error "Dashboard EXE selftest FAILED (exit $($DashProc.ExitCode)). See: $SmokeLog"
+    exit 1
+}
+Write-Host "  Dashboard selftest PASS" -ForegroundColor Green
+
+# Overlay runs with CWD = TEMP (not the exe dir) to prove frozen path
+# resolution no longer depends on CWD (RC2 trigger: user launching from
+# inside an archive tool / wrong directory).
+$OverlayProc = Start-Process -FilePath $OverlayExe -ArgumentList "--selftest" `
+    -WorkingDirectory $env:TEMP -Wait -PassThru
+if ($OverlayProc.ExitCode -ne 0) {
+    Write-Error "Overlay EXE selftest FAILED (exit $($OverlayProc.ExitCode), CWD=$env:TEMP). See: $SmokeLog"
+    exit 1
+}
+Write-Host "  Overlay selftest PASS (CWD=$env:TEMP — frozen path resolution verified)" -ForegroundColor Green
+
 Write-Host ""
 Write-Host "Both EXEs now in same directory — controller.start_overlay()"
 Write-Host "can find BlackDragonOverlay.exe next to sys.executable."
 Write-Host "Training dataset + runtime model surfaced next to exe."
+Write-Host "Selftest smoke passed for both EXEs."
 Write-Host ""
 Write-Host "Release package: copy dist/BlackDragon/ + models/ + config/"

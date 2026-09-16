@@ -83,7 +83,11 @@ def clean_combat_data():
                         'previous_action': last_mapped_action,  # 记录上一个是哪个合并招式
                         'phase': phase_val,
                         'is_enraged': enrage_val,
-                        'next_action': target_action
+                        'next_action': target_action,
+                        # P1(AutoML 实验): 会话来源标注——值=源战斗 CSV 文件名（不含路径）。
+                        # 纯增量列（放末位）：train_lgbm 显式选 6 特征列不受影响；
+                        # 用途 = StratifiedGroupKFold 分组 CV 对照（防泄漏稳健性检查）。
+                        'source_session': os.path.basename(file),
                     })
 
             last_row = row
@@ -99,11 +103,43 @@ def clean_combat_data():
         return
 
     clean_df = pd.DataFrame(all_transitions)
-    # v1.1: 写入前备份已有训练数据集，防止 pipeline 失败时旧数据丢失
-    if os.path.exists("data/ML_Ready_Dataset.csv"):
-        os.replace("data/ML_Ready_Dataset.csv", "data/ML_Ready_Dataset.csv.bak")
-    clean_df.to_csv("data/ML_Ready_Dataset.csv", index=False)
-    print(f"✅ V4.5 纯粹观测流(含起手映射)数据提纯完成！有效样本: {len(clean_df)} 条")
+
+    # ================= v3(F1): 合并语义 — 防止数据集被在场 CSV 静默替换 =================
+    # 事故根因：发行包不带原始 CSV 时（或用户清理后），本函数只从在场 CSV 重建
+    # 数据集 → 出厂 19 会话被单场会话替换。修复：写盘前读入现有数据集，
+    # 保留 source_session 不在本次 CSV 集合中的历史行，再追加本次新提取的
+    # 转移样本（同名会话以重新提取为准 = 全量 CSV 在场时行为与旧版零变化）。
+    dataset_path = "data/ML_Ready_Dataset.csv"
+    current_sessions = {os.path.basename(f) for f in all_files}
+    merged_history_rows = 0
+    if os.path.exists(dataset_path):
+        try:
+            old_df = pd.read_csv(dataset_path)
+        except Exception:
+            old_df = None
+            print("⚠️ 已有数据集读取失败，无法合并历史会话（旧文件仍会备份保留）")
+        if (old_df is not None and "source_session" in old_df.columns
+                and set(clean_df.columns) <= set(old_df.columns)):
+            keep = old_df[~old_df["source_session"].isin(current_sessions)]
+            if len(keep):
+                clean_df = pd.concat([keep[clean_df.columns], clean_df],
+                                     ignore_index=True)
+                merged_history_rows = len(keep)
+                print(f"📦 已保留 {keep['source_session'].nunique()} 个历史会话的 "
+                      f"{len(keep)} 行（本次未重录，合并进新数据集防止替换丢失）")
+        elif old_df is not None:
+            print("⚠️ 已有数据集缺少 source_session 列（远古格式），无法合并历史"
+                  "会话——旧内容仅保留在 .bak/.bak2 备份链中")
+
+    # v3(F3): 写盘改为 tmp 原子晋升 + 两代备份链（.bak/.bak2）+ 同 sha 跳过
+    #（杜绝"数据未变时二次运行把上一版推进备份链、出厂备份被自吞"）
+    from src.core.backup_chain import promote_with_backup
+    tmp_path = dataset_path + ".tmp"
+    clean_df.to_csv(tmp_path, index=False)
+    promote_with_backup(tmp_path, dataset_path, generations=2)
+    summary = (f"（含历史保留 {merged_history_rows} 条）"
+               if merged_history_rows else "")
+    print(f"✅ V4.5 纯粹观测流(含起手映射)数据提纯完成！有效样本: {len(clean_df)} 条{summary}")
 
 
 if __name__ == "__main__":

@@ -13,10 +13,27 @@
 
 import json
 import logging
+import os
+import sys
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 logger = logging.getLogger("BlackDragon")
+
+
+def resolve_runtime_path(path: str) -> Path:
+    """冻结/开发模式自适应的运行时资源路径解析（hotfix RC2）。
+
+    语义与 AppController.data_dir 范本一致：
+      - 开发模式: Path(path)（相对项目根，行为与历史版本一致）
+      - 冻结模式 + 相对路径: Path(sys.executable).parent / path
+        （PyInstaller EXE 的 CWD 不确定——双击 / 压缩软件内启动 / 快捷方式
+        均可能指向其他目录，资源必须基于 exe 所在目录解析）
+      - 绝对路径: 直接使用（保留 config 自定义路径能力）
+    """
+    if getattr(sys, "frozen", False) and not os.path.isabs(path):
+        return Path(sys.executable).parent / path
+    return Path(path)
 
 
 @dataclass

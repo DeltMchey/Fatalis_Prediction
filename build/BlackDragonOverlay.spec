@@ -50,6 +50,10 @@ hiddenimports = [
     'xgboost', 'xgboost.sklearn',
     # scikit-learn edge cases
     'sklearn.utils._typedefs', 'sklearn.utils._vector_sentinel',
+    # Hotfix: sklearn.pipeline is referenced ONLY via pickle inside the adopted
+    # model (Pipeline[...]) — absent from static analysis, caused silent
+    # model-load failure in the frozen Overlay (caught by --selftest).
+    'sklearn.pipeline',
     # pandas internals
     'pandas._libs.tslibs',
     # Project packages (Overlay process)

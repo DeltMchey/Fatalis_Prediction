@@ -275,7 +275,8 @@ class TestModuleInstantiation:
     def test_predictor_created_with_model_path(self, wired):
         main()
         args = wired["ActionPredictor"].call_args[0]
-        assert args[0] == "models/fatalis_ai_model.pkl"
+        # 开发模式下 resolve_runtime_path 原样返回相对路径（Windows 下 str(Path) 规范为 \）
+        assert args[0].replace("\\", "/") == "models/fatalis_ai_model.pkl"
 
     def test_predictor_loaded_prints_success(self, wired, capsys):
         wired["ActionPredictor"].return_value.is_loaded = True
@@ -469,3 +470,106 @@ class TestUtf8Stdio:
         monkeypatch.setattr(overlay_module, "OverlayUI", MagicMock())
         # main() 内 print("✅ ...") 不应抛 UnicodeEncodeError
         overlay_module.main()
+
+
+# =============================================================================
+# 8. Hotfix --selftest 入口（构建冒烟 / cwd 矩阵验证）
+# =============================================================================
+
+class TestSelftestEntry:
+    """selftest：路径解析 → 模型加载 → 一次推理 → 退出码。"""
+
+    def test_selftest_function_exists(self):
+        """overlay 模块提供可调用的 _selftest。"""
+        import overlay as overlay_module
+        assert callable(getattr(overlay_module, "_selftest", None))
+
+    def test_main_guard_dispatches_selftest_flag(self):
+        """__main__ 入口分发 --selftest（先于 main()，跳过游戏连接/UI）。"""
+        import inspect
+        import overlay as overlay_module
+        src = inspect.getsource(overlay_module)
+        assert '__name__ == "__main__"' in src
+        assert '"--selftest"' in src or "'--selftest'" in src
+
+    def test_selftest_passes_when_model_loads(self, monkeypatch, capsys):
+        """模型加载 + 推理正常 → 返回 0，stdout 含 PASS 与解析路径。"""
+        import pathlib
+        import overlay as overlay_module
+        monkeypatch.setattr(
+            overlay_module, "resolve_runtime_path",
+            lambda p: pathlib.Path(r"C:\fake_exe_dir") / p)
+        pred = MagicMock()
+        pred.is_loaded = True
+        pred.predict.return_value = [(37, 0.5)]
+        monkeypatch.setattr(
+            overlay_module, "ActionPredictor", MagicMock(return_value=pred))
+
+        assert overlay_module._selftest() == 0
+        out = capsys.readouterr().out
+        assert "PASS" in out
+        assert r"C:\fake_exe_dir" in out
+        pred.predict.assert_called_once()
+
+    def test_selftest_fails_when_model_not_loaded(self, monkeypatch, capsys):
+        """模型加载失败 → 返回 1。"""
+        import pathlib
+        import overlay as overlay_module
+        monkeypatch.setattr(
+            overlay_module, "resolve_runtime_path",
+            lambda p: pathlib.Path(r"C:\fake_exe_dir") / p)
+        pred = MagicMock()
+        pred.is_loaded = False
+        monkeypatch.setattr(
+            overlay_module, "ActionPredictor", MagicMock(return_value=pred))
+
+        assert overlay_module._selftest() == 1
+        assert "FAIL" in capsys.readouterr().out
+
+    def test_selftest_fails_when_predict_raises(self, monkeypatch, capsys):
+        """推理管线抛异常 → 返回 1（不向上传播）。"""
+        import pathlib
+        import overlay as overlay_module
+        monkeypatch.setattr(
+            overlay_module, "resolve_runtime_path",
+            lambda p: pathlib.Path(r"C:\fake_exe_dir") / p)
+        pred = MagicMock()
+        pred.is_loaded = True
+        pred.predict.side_effect = RuntimeError("pipeline broken")
+        monkeypatch.setattr(
+            overlay_module, "ActionPredictor", MagicMock(return_value=pred))
+
+        assert overlay_module._selftest() == 1
+        assert "FAIL" in capsys.readouterr().out
+
+
+# =============================================================================
+# 9. Hotfix RC2: overlay 组装使用 frozen-aware 路径解析
+# =============================================================================
+
+class TestFrozenPathResolution:
+    def test_main_uses_resolve_runtime_path_for_model(self):
+        """main() 源码通过 resolve_runtime_path 解析模型路径（不再是裸 cwd 相对路径）。"""
+        import inspect
+        import overlay as overlay_module
+        src = inspect.getsource(overlay_module.main)
+        assert "resolve_runtime_path" in src
+        # 不应再有直接把 cwd 相对路径喂给 ActionPredictor 的写法
+        assert 'ActionPredictor("models/' not in src
+
+    def test_main_logs_error_when_model_not_loaded(self):
+        """main() 含 else 分支 ERROR 日志（RC1 第二层修复）。"""
+        import inspect
+        import overlay as overlay_module
+        src = inspect.getsource(overlay_module.main)
+        assert "else:" in src
+        assert "logger.error" in src
+
+    def test_predictor_created_with_resolved_path_dev_mode(self, wired):
+        """开发模式（无 sys.frozen）→ 解析结果与原相对路径一致（行为不变）。"""
+        import sys as _sys
+        # wired fixture 已 patch overlay.ActionPredictor；确保非 frozen
+        assert not getattr(_sys, "frozen", False)
+        main()
+        args = wired["ActionPredictor"].call_args[0]
+        assert args[0].replace("\\", "/") == "models/fatalis_ai_model.pkl"

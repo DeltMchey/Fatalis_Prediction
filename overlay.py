@@ -12,6 +12,8 @@ ADR-P5.3（自动启动）：
 
 Usage:
     python overlay.py          # 独立覆盖层（由 launch.py / Dashboard 启动，或手动）
+    overlay --selftest         # 自检模式：路径解析→模型加载→一次推理→exit 0/1
+                               # （frozen EXE 冒烟与 CWD 矩阵验证入口，跳过游戏/UI）
 
 Entry points:
     python launch.py           # Dashboard + Overlay（推荐）
@@ -34,7 +36,7 @@ import pymem.process
 
 from src.logging_config import setup_logging
 
-from src.app.config import AppConfig
+from src.app.config import AppConfig, resolve_runtime_path
 from src.core.memory_reader import MemoryReader
 from src.core.state_tracker import CombatStateTracker
 from src.model.predictor import ActionPredictor
@@ -106,10 +108,18 @@ def main() -> None:
     state_tracker = CombatStateTracker(is_recording=config.auto_record)
 
     # 3. AI 预测（UI 专用）
-    predictor = ActionPredictor("models/fatalis_ai_model.pkl")
+    #    hotfix RC2: frozen 模式下 CWD 不确定（双击/压缩软件内启动），
+    #    相对路径 "models/..." 会指向不存在的文件 → 模型加载静默失败。
+    #    resolve_runtime_path 在冻结模式基于 exe 目录解析。
+    model_path = str(resolve_runtime_path("models/fatalis_ai_model.pkl"))
+    predictor = ActionPredictor(model_path)
     if predictor.is_loaded:
-        logger.info("成功加载 AI 预测模型")
+        logger.info("成功加载 AI 预测模型: %s", model_path)
         print("✅ 成功加载 AI 预测模型！")
+    else:
+        # hotfix RC1: 失败分支曾完全无痕（stdout 又被 controller DEVNULL 吞掉），
+        # UI 侧仅显示固定提示——ERROR 日志是用户可回传的唯一线索
+        logger.error("AI 预测模型未加载（预测功能禁用）— 解析路径: %s", model_path)
 
     # 4. 通信通道
     action_buffer = deque(maxlen=100)
@@ -128,5 +138,43 @@ def main() -> None:
     overlay.run()
 
 
+def _selftest() -> int:
+    """冻结模式自检：路径解析 → 模型加载 → 一次推理 → 退出码。
+
+    Hotfix 防再漏措施（RC2）：跑在真实 Overlay EXE 进程里——本模块的
+    模块级 import（pymem / DPG / xgboost pickle 链）与生产启动完全一致，
+    但跳过游戏连接与 UI 主循环。构建冒烟（build_exe.ps1）与
+    "非 exe 目录 CWD 启动"矩阵验证均以本入口为准。
+
+    Returns:
+        0 = 模型加载 + 推理管线通过；1 = 任一环节失败（详见 blackdragon.log）。
+    """
+    _ensure_utf8_stdio()
+    model_path = str(resolve_runtime_path("models/fatalis_ai_model.pkl"))
+    print(f"[selftest] 模型路径解析: {model_path}")
+    logger.info("[selftest] Overlay 自检开始, 模型路径: %s", model_path)
+
+    predictor = ActionPredictor(model_path)
+    if not predictor.is_loaded:
+        logger.error("[selftest] FAIL: AI 模型加载失败: %s", model_path)
+        print("[selftest] FAIL: AI 模型加载失败")
+        return 1
+    print("[selftest] 模型加载成功")
+
+    try:
+        results = predictor.predict(1500.0, 45.0, 1, 37, 1, 0)
+    except Exception:
+        logger.error("[selftest] FAIL: 推理管线异常\n%s", traceback.format_exc())
+        print("[selftest] FAIL: 推理管线异常")
+        return 1
+
+    top = f"{results[0][0]}: {results[0][1] * 100:.1f}%" if results else "(空)"
+    print(f"[selftest] predict 返回 {len(results)} 个候选, top={top}")
+    print("[selftest] PASS")
+    return 0
+
+
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
     main()

@@ -13,6 +13,7 @@
   - 冻结模式:  BlackDragon.exe           → spawn `BlackDragonOverlay.exe`
   - 流水线模式: python launch.py --pipeline → data_cleaner → Run B 后端（冻结模式由 controller 拉起）
   - 训练模式:  python launch.py --train  → 仅运行 train_lgbm.py（legacy，向后兼容）
+  - 自检模式:  launch --selftest → 动态 import + 模型加载 + 推理自检 → exit 0/1（构建冒烟入口）
   （由 sys.frozen 检测；冻结模式下跳过 DependencyChecker——依赖已打包）
 
 Usage:
@@ -35,6 +36,64 @@ from src.dashboard.main_window import Dashboard
 logger = setup_logging()
 
 
+def _selftest() -> int:
+    """冻结模式自检（Dashboard EXE）：动态 import 链 + 模型加载 + 一次推理。
+
+    Hotfix 防再漏措施：与 overlay.py --selftest 等价，额外覆盖 Dashboard
+    进程特有的动态 import 高危点（data_cleaner / production_backend——
+    均为运行期 import，PyInstaller 静态分析不可见，历史上曾漏打包）。
+    模块级 import（Dashboard/dearpygui 链）在本函数执行前已完成——
+    import 失败即进程非零退出，同样被冒烟判定捕获。
+
+    Returns:
+        0 = 全部通过；1 = 任一环节失败（详见 blackdragon.log）。
+    """
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass  # 非 TTY / 不支持 reconfigure 时忽略
+
+    # 1. 动态 import 链（hiddenimports 高危点）
+    try:
+        from data_cleaner import clean_combat_data  # noqa: F401
+        from src.model.production_backend import train_runb_backend  # noqa: F401
+        print("[selftest] 动态依赖 import 成功 (data_cleaner / production_backend)")
+    except Exception:
+        logger.error("[selftest] FAIL: 动态依赖 import 失败\n%s",
+                     traceback.format_exc())
+        print("[selftest] FAIL: 动态依赖 import 失败")
+        return 1
+
+    # 2. 模型路径解析（hotfix RC2）+ 加载 + 一次推理
+    #    （函数内 import 同样是 frozen 高危点——一并纳入 try）
+    try:
+        from src.app.config import resolve_runtime_path
+        from src.model.predictor import ActionPredictor
+
+        model_path = str(resolve_runtime_path("models/fatalis_ai_model.pkl"))
+        print(f"[selftest] 模型路径解析: {model_path}")
+        logger.info("[selftest] Dashboard 自检开始, 模型路径: %s", model_path)
+
+        predictor = ActionPredictor(model_path)
+        if not predictor.is_loaded:
+            logger.error("[selftest] FAIL: AI 模型加载失败: %s", model_path)
+            print("[selftest] FAIL: AI 模型加载失败")
+            return 1
+        print("[selftest] 模型加载成功")
+
+        results = predictor.predict(1500.0, 45.0, 1, 37, 1, 0)
+    except Exception:
+        logger.error("[selftest] FAIL: 自检环节异常\n%s",
+                     traceback.format_exc())
+        print("[selftest] FAIL: 自检环节异常")
+        return 1
+
+    print(f"[selftest] predict 返回 {len(results)} 个候选")
+    print("[selftest] PASS")
+    return 0
+
+
 def main() -> None:
     """组装并运行 Dashboard 控制中心 + Overlay 子进程。
 
@@ -43,6 +102,12 @@ def main() -> None:
       - --pipeline:  数据清洗 + Run B 训练后端（一键流程，frozen 模式下由 controller 拉起）
       - --train:     仅模型训练（legacy train_lgbm，向后兼容）
     """
+    # 0. --selftest 模式：冻结 EXE 自检（构建冒烟 / CWD 矩阵验证入口，
+    #    跳过 DependencyChecker / Overlay 启动 / Dashboard 主循环）
+    if "--selftest" in sys.argv:
+        sys.argv.remove("--selftest")
+        sys.exit(_selftest())
+
     # 0a. --pipeline 模式：data_cleaner → Run B 后端（一键训练流程）
     if "--pipeline" in sys.argv:
         sys.argv.remove("--pipeline")

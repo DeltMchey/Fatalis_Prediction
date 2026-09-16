@@ -277,3 +277,43 @@ FLAML AutoML 默认 n_jobs = -1（automl.py: settings["n_jobs"] = get("n_jobs", 
 3. 验证一键训练生效：训练后 `models/fatalis_ai_model.pkl.meta.json` 的 `backend` 字段应为 `runb_config`；`models/feature_importance.png` 变为 12 特材 gain 条形图。
 4. 出厂模型即 Run B（与上版预览包相同）：不训练直接玩，预测行为与上版完全一致（同模型文件）。
 5. 回滚：`models/fatalis_ai_model.pkl.bak`（训练前的旧模型）覆盖回 `fatalis_ai_model.pkl`；或重新解压。
+
+## 11. Hotfix 简报：Overlay 冻结包不显示 AI 预测（v2 预览包，2026-09-16）
+
+### 11.1 现象与根因
+
+v1（runB-oneclick）预览包用户实测：Overlay 状态栏正常刷新，但 AI 预测区**永久空白**，无任何报错。诊断（Reviewer 主诊 + 实施中 selftest 实证）确认三个独立缺陷叠加：
+
+| 编号 | 缺陷 | 位置 | 性质 |
+|---|---|---|---|
+| RC1 | 模型加载失败被三层静默吞噬：except 置 None 无日志 → 入口只有成功分支且 stdout 被 DEVNULL 吞 → UI 仅在 is_loaded 时写 ai_text | `src/model/predictor.py` / `overlay.py` / `src/ui/overlay.py` | 结构性（无观测手段） |
+| RC2 | 模型路径为 cwd 相对路径，无 frozen 解析——从非 exe 目录启动（压缩软件内直跑、快捷方式 Start in 不同等）即加载失败 | `overlay.py` / `controller.py` / `src/app/config.py` | 触发器 |
+| RC-B | **Overlay EXE 缺 `sklearn.pipeline`**：采纳模型是 `Pipeline[...]`，unpickle 动态引用该模块，PyInstaller 静态分析不可见；Dashboard 因 production_backend 训练链静态导入而幸免 | `build/BlackDragonOverlay.spec` | 触发器（v1 用户最可能的直接原因） |
+
+RC-B 由本轮新增的 `--selftest` 首跑即暴露（旧验证方式"存活 10s"永远测不到）。
+
+### 11.2 修复清单（v2）
+
+1. **路径解析统一**：`src/app/config.py` 新增 `resolve_runtime_path()`（语义同 `data_dir` 范本：frozen+相对 → 基于 `sys.executable` 目录）；`overlay.py` / `controller.attach_game` / `logging_config.py`（日志文件 frozen 时写 exe 目录）全部改用；`data_dir` 本体重构为调用该函数。
+2. **可观测性**：`predictor.py` 加载失败 → `logger.error`（含路径 + traceback，logger 名对齐 "BlackDragon"）；`overlay.py` 补 else 分支 ERROR；UI 模型未加载 → 橙色固定提示"⚠ AI 模型未加载"（Nova 预警优先级更高）。
+3. **`--selftest` 永久诊断入口**：`overlay.py` 与 `launch.py` 均支持——跳过游戏连接/UI，执行"路径解析 → 加载 → 一次 predict → exit 0/1"，跑在真实 EXE 进程（import 链与生产一致）；Dashboard 侧额外校验 data_cleaner / production_backend 动态 import（hiddenimports 历史漏点）。
+4. **spec 修复**：Overlay hiddenimports 补 `sklearn.pipeline`。
+5. **构建冒烟固化**：`build_exe.ps1` 第 7 步自动跑双 EXE selftest，任一失败即构建失败；Overlay 特意用 CWD=TEMP 运行（同时覆盖 RC2 场景）。**教训：PowerShell `& exe` 不等待 GUI 子系统进程，`$LASTEXITCODE` 是陈旧值 → 假阳性 PASS**；必须 `Start-Process -Wait -PassThru` 取真实 ExitCode（本轮首跑的假阳性正是靠该机制修正后发现）。
+
+### 11.3 验证（生产模型零触碰，任务前后 sha 一致：主 `ed3db5f8…` / bak `4d2344cf…`）
+
+- 单测：新增 26 个（路径解析 frozen 分支、predictor 失败日志、UI 未加载提示/Nova 优先级、双 selftest 入口成功/失败路径、main 分发），全量 **733 passed**（基线 707，零回归）。
+- 冻结冒烟（修正等待语义后真实退出码）：Dashboard @项目根 = 0；Overlay @TEMP/@C:\/@用户目录 = 0。
+- **负向控制**：临时移走 dist 模型 → Overlay selftest exit 1（证明判定链路非"永远 PASS"）。
+- v2 包组装后复测：双 EXE @非 exe 目录 CWD 全 0。
+- 修复前实证：Overlay selftest 曾 FAIL 且 `blackdragon.log` 记录完整 traceback（`ModuleNotFoundError: sklearn.pipeline`）——RC1 的可观测性目标达成。
+
+### 11.4 v2 预览包
+
+`release/Fatalis-Prediction-runB-oneclick-preview-v2.zip` = **154.8 MiB**（G6 ≤300MB **PASS**；v1 154.8 MiB，+47KB 来自 sklearn.pipeline 与 selftest），内含双 EXE、Run B 模型（sha 与生产一致）、数据集、新 README（含快速确认指引）。v1 包保留便于对比。
+
+### 11.5 用户实测指引（v2）
+
+1. 解压 v2 到任意目录 → 双击 `BlackDragon.exe` → 进黑龙任务：预测区应显示绿色 Top-3；若模型异常则显示橙色"⚠ AI 模型未加载"（**不再可能空白**）。
+2. 故意复现 v1 场景：直接在压缩软件里运行 EXE（不解压或异目录 CWD）→ 仍应有预测（RC2 修复）；命令行 `BlackDragonOverlay.exe --selftest` 退出码应为 0。
+3. 若 v2 仍无预测：把解压目录的 `blackdragon.log` 发回——现在任何加载失败都有完整 traceback，可直接定谳（若日志也无异常则指向 RC3 类环境问题，另行排查）。

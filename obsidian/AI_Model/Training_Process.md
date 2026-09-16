@@ -2,111 +2,121 @@
 title: Training Process
 tags:
   - training
+  - XGBoost
   - LightGBM
   - hyperparameters
   - dataset
 created: 2026-07-26
-updated: 2026-07-26
+updated: 2026-09-16
 ---
 
 # Training Process
 
 ## 概述
 
-模型训练由 `train_lgbm.py` 脚本完成，从 `ML_Ready_Dataset.csv` 加载清洗后的派生对数据，训练一个 LightGBM 多分类器。
+v1.2.0 起，生产模型训练由 `src/model/production_backend.py` 完成（FLAML AutoML Run B 采纳配置，ADR-P6.1）：从 `ML_Ready_Dataset.csv` 加载派生对数据，确定性重训 XGBoost Pipeline，几秒完成（fit ~1.8s，单线程无 CPU 尖峰）。旧入口 `train_lgbm.py`（`--train`）保留为 legacy LightGBM 路径。
 
-## 训练管线
+## 训练管线（production_backend.py）
 
 ```mermaid
 graph LR
-    A[ML_Ready_Dataset.csv] --> B[加载数据]
-    B --> C[过滤罕见招式<br/>出现次数 < 3]
-    C --> D[类别特征编码<br/>astype category]
-    D --> E[8:2 Train/Test Split<br/>random_state=42]
-    E --> F[LightGBM 训练<br/>300 estimators<br/>early_stopping=15]
-    F --> G[评估]
-    G --> H[保存 .pkl + 特征重要性图]
+    A[ML_Ready_Dataset.csv] --> B[load_ml_dataset]
+    B --> C[分层切分 8:2<br/>random_state=42]
+    C --> D[FeatureBuilder<br/>仅 fit 于 train_80<br/>防泄漏红线]
+    D --> E[稀有类 auto_augment<br/>镜像 FLAML 语义<br/>1949 → 2175 行]
+    E --> F[shuffle random_state=1<br/>+ LabelEncoder]
+    F --> G[XGBClassifier<br/>Run B 配置<br/>190 树 / n_jobs=1]
+    G --> H[LabelDecodedEstimator<br/>包装 → sklearn Pipeline]
+    H --> I[写 .tmp → 原子提升<br/>两代备份链]
+    I --> J[产物: .pkl + gain 特征图<br/>+ sidecar + 训练日志]
 ```
 
-## 超参数配置
+> [!important] 复现要点（P7 排查成果）
+> FLAML 的稀有类增广与 shuffle 必须**逐语义镜像**，否则类别先验（booster base_score）与训练行集不同，top3 偏差 +0.6pp。升级 FLAML 版本时需重新核对这两个隐藏行为。
+
+## 超参数配置（Run B）
 
 ```python
-model = lgb.LGBMClassifier(
-    objective='multiclass',
-    num_leaves=63,           # 叶节点数，控制模型复杂度
-    max_depth=7,              # 最大树深度，防止过拟合
-    learning_rate=0.03,       # 学习率
-    n_estimators=300,         # 最大树数（配合 early_stopping 实际可能更少）
-    random_state=42,
-    class_weight='balanced',  # 自动平衡稀有/常见招式权重
-    n_jobs=-1,                # 使用全部 CPU 核心
-    subsample=0.8,            # 行采样：每棵树随机 80% 样本
-    colsample_bytree=0.8,     # 列采样：每棵树随机 80% 特征
-    importance_type='gain'    # 特征重要性计算方式
-)
+RUNB_BEST_CONFIG = {
+    "n_estimators": 190,      # 树数
+    "max_depth": 4,           # 最大树深度
+    "max_leaves": 4,          # 叶节点数
+    "learning_rate": 0.078,   # 学习率（FLAML 搜索产物 0.07796…）
+    "subsample": 0.946,       # 行采样（0.94573…）
+    # 固定附加: objective=多分类 / enable_categorical / n_jobs=1（不设 random_state）
+}
 ```
 
-## 超参数详解
-
-| 参数 | 值 | 作用 | 调参理由 |
-|------|-----|------|----------|
-| `num_leaves` | 63 | 树复杂度 | 配合 max_depth=7，63 < 2^7=128，避免过拟合 |
-| `max_depth` | 7 | 限制树深度 | 数据集较小（数千样本），浅树防过拟合 |
-| `learning_rate` | 0.03 | 学习率 | 较小学习率配合较多树，提升泛化能力 |
-| `n_estimators` | 300 | 最大树数 | 配合 early_stopping=15，实际通常早停 |
-| `subsample` | 0.8 | 行采样 | 每棵树随机 80% 样本，增强泛化 |
-| `colsample_bytree` | 0.8 | 列采样 | 每棵树随机 80% 特征（6 取 5），多样性 |
-| `class_weight` | balanced | 类别权重 | 稀有招式（如捕食）和常见招式（龙车/火球）自动平衡 |
-| `early_stopping` | 15 | 早停轮数 | 验证 loss 连续 15 轮不降则停止，节省时间 |
+| 参数 | 值 | 作用 |
+|------|-----|------|
+| `n_estimators` | 190 | 树数（AutoML 搜索产物，非手工设定） |
+| `max_depth` / `max_leaves` | 4 / 4 | 浅树防过拟合；浅树更易利用分箱后的距离档位 |
+| `learning_rate` | 0.078 | 较大步长配合少树，训练几秒完成 |
+| `subsample` | 0.946 | 行采样增强泛化 |
+| `n_jobs` | 1 | 单线程训练与推理（Windows OpenMP 堆损坏教训，见 ADR-P6.1 Decision 2） |
+| FeatureBuilder fit 范围 | 仅 train_80 | 派生特征统计量（如 prev_action_freq）不接触测试集，防泄漏 |
 
 ## 训练数据
 
 | 指标 | 数值 |
 |------|------|
-| 原始录制文件 | 17 个 |
-| 原始数据总大小 | ~11 MB |
-| 清洗后样本数 | 数千条派生对 |
-| 特征维度 | 6 |
-| 招式类别数 | ~40-60 个 |
-| 每类最少样本 | ≥3（训练前过滤） |
-| Train/Test 比例 | 80% / 20% |
+| 原始录制文件 | 19 个（随发行包分发，作数据集重建保险） |
+| 数据集样本数 | 2444 行派生对 |
+| 留出集（holdout） | 488 行 / 46 类 |
+| 外部输入特征 | 6（Pipeline 内扩展 12 列） |
+| 招式类别数 | 46 |
+| Train/Test 比例 | 80% / 20%（分层切分，random_state=42） |
+| 稀有类增广 | train_80 内 <20 样本类整行复制（1949 → 2175 行，镜像 FLAML auto_augment） |
 
 ## 训练命令
 
 ```bash
-# 步骤 1: 清洗数据
-python data_cleaner.py
-# 输出: "✅ V4.5 纯粹观测流数据提纯完成！有效样本: N 条"
+# 推荐：一键管线（数据清洗 → Run B 后端重训）
+python launch.py --pipeline
+#   = data_cleaner（合并语义：保留历史会话）→ production_backend（XGBoost Run B）
+#   训练前输出: 📊 本次训练数据：X 会话 / Y 行 / Z 类
+#   输出 tee 到 models/train_YYYYMMDD_HHMMSS.log（保留最近 10 份）
 
-# 步骤 2: 训练模型
-python train_lgbm.py
-# 输出:
-#   🏆 绝对准确率 (Accuracy): XX.XX%
-#   🌟 实战黄金指标：Top-3 命中率: XX.XX%
-#   💾 模型已保存至: models/fatalis_ai_model.pkl
-#   📈 图表已保存为 models/feature_importance.png
+# legacy：LightGBM 路径（向后兼容保留）
+python train_lgbm.py          # 或 python launch.py --train
 ```
+
+## 守门与可观测
+
+| 机制 | 行为 |
+|------|------|
+| 数据摘要行 | 训练前打印本次 vs 上代的 会话数 / 行数 / 类数 |
+| 破坏性变化告警 | 数据集行数 < 上代 50%、holdout < 100 行、类数降 ≥20% 时打 ⚠ 警告（**只警告不阻塞**，写 sidecar `gate_warnings`） |
+| 训练日志 | 每次训练 tee 到 `models/train_*.log`，保留最近 10 份 |
+| 备份链 | 提升走 `promote_with_backup`（`src/core/backup_chain.py`）：`.bak`（上一版）→ `.bak2`（上上版）；同 sha 跳过轮换（重复训练不吃掉备份） |
+| 出厂副本 | `models/factory_model.pkl` 不可变，训练/轮换永不触碰 |
 
 ## 训练产物
 
 | 文件 | 大小 | 说明 |
 |------|------|------|
-| `models/fatalis_ai_model.pkl` | ~18 MB | joblib 序列化的 LightGBM 模型 |
-| `models/feature_importance.png` | ~50 KB | 6 维特征重要性条形图 |
+| `models/fatalis_ai_model.pkl` | 7.46 MB | joblib 序列化的 XGBoost Pipeline（FeatureBuilder + LabelDecodedEstimator） |
+| `models/fatalis_ai_model.pkl.meta.json` | ~2 KB | sidecar：来源链 / sha256 / 门槛数据 / gate_warnings / 回滚程序 |
+| `models/feature_importance.png` | ~50 KB | 12 列特征 gain 重要性条形图 |
+| `models/train_*.log` | — | 最近 10 份训练日志 |
+| `models/*.pkl.bak` / `.bak2` | — | 两代备份链 |
+| `models/factory_model.pkl` | 7.46 MB | 出厂模型（不可变回滚副本） |
 
 ## 评估指标
 
 详见 [[AI_Model/Model_Evaluation|Model Evaluation]]。
 
-| 指标 | 计算方式 | 说明 |
+| 指标 | 计算方式 | v1.2.0 留出集 |
 |------|----------|------|
-| Accuracy | `accuracy_score(y_test, y_pred)` | Top-1 命中率 |
-| Top-3 命中率 | `真实标签在预测 Top-3 中的比例` | 实战核心指标 |
+| Top-1 | 预测第一位命中 | 32.58% |
+| Top-3（raw） | 真实标签在预测 Top-3 中的比例 | 66.19% |
+| Top-3（filtered，实战口径） | 阶段+姿态硬过滤后 | 65.37% |
 
 ## 技术债与改进方向
 
-| # | 问题 | 计划 |
+| # | 问题 | 现状 / 计划 |
 |---|------|------|
-| #6 | 无模型版本管理 | P5: 文件名加时间戳 + metadata.json |
-| #7 | 无增量学习 | P5: `init_model` 参数支持 |
-| #9 | 缺少特征消融实验 | P5: 逐特征移除对比准确率变化 |
+| #6 | 无模型版本管理 | **已基本解决（v1.2.0）**：sidecar meta.json + 两代备份链 + factory_model 回滚层；仍缺多版本并存管理 |
+| #7 | 无增量学习 | 未做（XGBoost 全量重训仅几秒，动机减弱） |
+| #9 | 缺少特征消融实验 | **已做（P6）**：Run A（仅 6 特征）vs Run B（12 列）对照，派生特征贡献 50.71% gain，见 [[docs/AutoML_RunB_Feature_Insights|Run B Feature Insights]] |
+| — | sha256 工具三处副本 | follow-up：`scripts/{adopt_model,benchmark_model,train_automl}.py` 改为 import `src/core/backup_chain.py` 的实现 |

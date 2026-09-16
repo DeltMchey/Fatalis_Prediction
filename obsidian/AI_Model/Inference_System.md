@@ -4,31 +4,34 @@ tags:
   - AI
   - inference
   - prediction
+  - XGBoost
   - LightGBM
 created: 2026-08-04
-updated: 2026-08-04
+updated: 2026-09-16
 ---
 
-# Inference System — BlackDragon v1.0
+# Inference System — BlackDragon v1.2
 
-> 推理系统（合并旧 LightGBM_Model + Model_Evaluation 的概览版）。模型规格见原 [[AI_Model/LightGBM_Model|LightGBM Model]]，评估见 [[AI_Model/Model_Evaluation|Model Evaluation]]。
+> 推理系统（合并旧 LightGBM_Model + Model_Evaluation 的概览版）。模型规格见原 [[AI_Model/LightGBM_Model|LightGBM Model]]（现为 Production Model 页），评估见 [[AI_Model/Model_Evaluation|Model Evaluation]]。
 
 ## 1. 模型规格
 
 | 属性 | 值 |
 |------|-----|
-| 框架 | LightGBM 4.6.0 |
-| 类型 | 多分类（Multiclass） |
-| 输入特征 | 6 维 |
-| 输出类别 | ~40-60 个招式 |
-| 模型文件 | `models/fatalis_ai_model.pkl` (~18 MB) |
-| 加载 | `ActionPredictor(model_path)` — joblib.load |
+| 框架 | XGBoost 3.4.1（sklearn Pipeline 封装；v1.2.0 起替代 LightGBM，ADR-P6.1） |
+| 类型 | 多分类（Multiclass），190 树 / depth 4 |
+| 结构 | `Pipeline[FeatureBuilder(src/model/features.py) → LabelDecodedEstimator(XGBClassifier)(src/model/label_decode.py)]` |
+| 外部输入特征 | 6 维（Pipeline 内扩展 12 列） |
+| 输出类别 | 46 个招式（`classes_` 即原始招式 ID，LabelDecodedEstimator 已解码） |
+| 模型文件 | `models/fatalis_ai_model.pkl`（**7.46 MB**） |
+| 加载 | `ActionPredictor(model_path)` — joblib.load；失败时 `logger.error`（含 traceback） |
 
 ## 2. 推理流程
 
 ```mermaid
 graph TD
-    FEAT[6 维特征向量] --> PROBA[predict_proba<br/>P 所有招式]
+    FEAT[6 维特征向量] --> FB[FeatureBuilder<br/>Pipeline 内扩展 12 列]
+    FB --> PROBA[predict_proba<br/>P 所有招式]
     PROBA --> PF[Phase Filter<br/>P1_ONLY / P2_PLUS / P3_ONLY]
     PF --> POF[Posture Filter<br/>站立排除 / 趴下排除]
     POF --> NORM[Renormalize<br/>P /= ΣP]
@@ -36,7 +39,7 @@ graph TD
     TOP3 --> DISPLAY[悬浮窗显示<br/>招式名 + 概率%]
 ```
 
-**实现**：`ActionPredictor.predict()`（`src/model/predictor.py`）：
+**实现**：`ActionPredictor.predict()`（`src/model/predictor.py`）——对外契约与 v1.0 相同：
 
 ```python
 predict(distance, relative_angle, posture, previous_action, phase, is_enraged)
@@ -45,7 +48,7 @@ predict(distance, relative_angle, posture, previous_action, phase, is_enraged)
 
 内部调用 static methods：`filter_probs_by_phase` → `filter_probs_by_posture` → `renormalize_probs` → `select_top_k(k=3, threshold=0.03)`。
 
-**模型未加载**：`_model = None` → `predict()` 返回 `[]`。
+**模型未加载**：`_model = None` → `predict()` 返回 `[]`；加载失败记入日志（含 traceback），Overlay UI 显示橙色 **"⚠ AI 模型未加载"** 提示（Nova 预警优先级更高）——AI 区不再可能无提示空白（v1.2.0 冻结包可观测性修复）。
 
 ## 3. 两层预测架构（核心创新）
 
@@ -53,10 +56,10 @@ predict(distance, relative_angle, posture, previous_action, phase, is_enraged)
 
 | 层 | 机制 | 数据源 |
 |----|------|--------|
-| ML 层 | `predict_proba()` → 所有招式概率 | `models/fatalis_ai_model.pkl` |
+| ML 层 | `predict_proba()` → 所有招式概率 | `models/fatalis_ai_model.pkl`（XGBoost Pipeline） |
 | 物理规则层 | Phase 过滤 + Posture 过滤 → 重归一化 → Top-3 | `src/config/actions.py` 的 `P1_ONLY_IDS` 等 |
 
-## 4. 6 维特征
+## 4. 特征（6 输入 → 12 列）
 
 | # | 特征 | 类型 | 来源 |
 |---|------|------|------|
@@ -67,40 +70,42 @@ predict(distance, relative_angle, posture, previous_action, phase, is_enraged)
 | 4 | phase | category(3) | HP% 推导 |
 | 5 | is_enraged | category(2) | 硬件级读取 |
 
-详见 [[AI_Model/Feature_Engineering|Feature Engineering]]。
+推理接口只传以上 6 维；Pipeline 内 `FeatureBuilder` 自动扩展出 `distance_bin` / `posture_x_phase` / `prev_action_freq` / `distance_x_enraged` / `angle_sin` / `angle_cos` 共 12 列。详见 [[AI_Model/Feature_Engineering|Feature Engineering]]。
 
 ## 5. 推理性能
 
 | 指标 | 值 |
 |------|-----|
 | 推理触发 | 每 0.5s（`_AI_THROTTLE_INTERVAL`，OverlayUI 内） |
-| 单次延迟 | < 5ms |
-| 模型加载 | < 1s |
+| 单次延迟 | p95 4.31ms（留出集实测，v1.2.0） |
+| 推理 CPU | 单线程（pickle 内嵌 n_jobs=1），cpu_mean ~2.3% |
+| 模型加载 | joblib.load；加载 RSS 增量 ~122MB（xgboost booster 反序列化固有代价，用户裁决接受） |
 | 预测节流 | 仅动作变化后 0.5s 内执行一次（`_last_ai_time` 游标） |
 
 ## 6. 评估指标
 
-| 指标 | 说明 | 基线 |
+| 指标 | 说明 | v1.2.0（留出集 488 行 / 46 类） |
 |------|------|------|
-| Accuracy | Top-1 命中率 | 见最新训练 |
-| Top-3 命中率 | 真实标签在 Top-3 中的比例（**实战核心**） | 56.17%（v0.1.0, 17 场狩猎） |
+| top1 | Top-1 命中率 | **32.58%** |
+| top3_raw | 真实标签在 Top-3 中的比例 | **66.19%** |
+| top3_filtered | 硬过滤后（**实战核心**） | **65.37%** |
 
-### 特征重要性（预期排序）
+### 特征重要性（v1.2.0 gain 实测）
 
-1. `previous_action`（最高——招式连段）
-2. `phase`（高——招式池变化）
-3. `posture`（高——姿态限制）
-4. `distance`（中）
-5. `relative_angle`（中）
-6. `is_enraged`（低~中）
+前三：`distance_bin` 14.68%、`posture` 14.58%、`posture_x_phase` 14.08%；派生 6 列合计 50.71%。完整表见 [[AI_Model/Feature_Engineering|Feature Engineering]]。
 
-## 7. 显示层（OverlayUI）
+## 7. selftest 自检（v1.2.0）
+
+双 EXE 均支持 `--selftest`：在真实 EXE 进程内执行"路径解析 → 模型加载 → 一次 predict"，exit 0/1。`build_exe.ps1` 第 7 步自动跑双 EXE selftest，任一失败即构建失败（硬门禁）；Overlay 特意以 CWD=TEMP 运行以覆盖 frozen 路径解析场景。
+
+## 8. 显示层（OverlayUI）
 
 - 绿色文本：`预测下一招: 龙车 45.0% / 连咬 30.0% / ...`
 - 红色文本：Nova 预警（`【飞天火预警】血线触发，请立刻准备规避！`）
 - Nova 优先于预测（触发时跳过推理）
+- 橙色提示：`⚠ AI 模型未加载`（模型加载失败时，替代空白 AI 区）
 
-## 8. 推理触发链路（双进程）
+## 9. 推理触发链路（双进程）
 
 Dashboard 与 Overlay 两个进程**各自独立**加载模型并推理：
 

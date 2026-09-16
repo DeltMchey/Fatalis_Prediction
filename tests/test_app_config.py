@@ -91,3 +91,53 @@ class TestReset:
         cfg.reset_to_defaults()
         assert cfg.model_path == "models/fatalis_ai_model.pkl"
         assert cfg.overlay_opacity == 1.0
+
+
+# =============================================================================
+# Hotfix RC2: resolve_runtime_path — 冻结/开发模式自适应路径解析
+# =============================================================================
+
+import sys
+from pathlib import Path
+
+from src.app.config import resolve_runtime_path
+
+
+class TestResolveRuntimePath:
+    """覆盖：开发模式原样返回 / frozen 相对路径基于 exe 目录 /
+    frozen 绝对路径直通 / frozen=False 显式属性 / cwd 无关性。"""
+
+    def test_dev_mode_relative_path_unchanged(self, monkeypatch):
+        """开发模式（无 sys.frozen）→ 相对路径原样返回（历史行为不变）。"""
+        monkeypatch.delattr(sys, "frozen", raising=False)
+        result = resolve_runtime_path("models/fatalis_ai_model.pkl")
+        assert result == Path("models/fatalis_ai_model.pkl")
+
+    def test_frozen_relative_path_resolves_against_exe_dir(self, monkeypatch):
+        """frozen + 相对路径 → <exe_dir>/<path>（RC2 修复核心）。"""
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(
+            sys, "executable",
+            r"C:\Games\BlackDragon\BlackDragonOverlay.exe")
+        result = resolve_runtime_path("models/fatalis_ai_model.pkl")
+        assert result == Path(r"C:\Games\BlackDragon") / "models" / "fatalis_ai_model.pkl"
+
+    def test_frozen_absolute_path_passthrough(self, monkeypatch):
+        """frozen + 绝对路径 → 直接使用（config 自定义路径能力保留）。"""
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        custom = r"D:\MyModels\custom.pkl"
+        assert resolve_runtime_path(custom) == Path(custom)
+
+    def test_explicit_frozen_false_behaves_like_dev(self, monkeypatch):
+        """sys.frozen 显式为 False → 与开发模式一致。"""
+        monkeypatch.setattr(sys, "frozen", False, raising=False)
+        assert resolve_runtime_path("data") == Path("data")
+
+    def test_frozen_resolution_independent_of_cwd(self, monkeypatch, tmp_path):
+        """frozen 解析结果不依赖 CWD（cwd 矩阵场景：从任意目录启动）。"""
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(
+            sys, "executable", str(tmp_path / "BlackDragon.exe"))
+        monkeypatch.chdir(tmp_path)  # CWD 与 exe 目录解耦——结果不应随之改变
+        result = resolve_runtime_path("models/x.pkl")
+        assert result == tmp_path / "models" / "x.pkl"

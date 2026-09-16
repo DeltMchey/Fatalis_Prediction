@@ -25,6 +25,18 @@ def get_log_queue() -> "queue.Queue[logging.LogRecord]":
     return _log_queue
 
 
+def _resolve_log_path() -> str:
+    """日志文件路径（hotfix RC2: frozen-aware）。
+
+    冻结模式下 CWD 不确定（双击/压缩软件内启动），写到 exe 目录
+    保证用户总能找回 blackdragon.log；开发模式保持 CWD 相对路径不变。
+    复用 src.app.config.resolve_runtime_path —— 与模型/数据路径同一解析器，
+    避免 frozen 判定逻辑双实现漂移。
+    """
+    from src.app.config import resolve_runtime_path
+    return str(resolve_runtime_path("blackdragon.log"))
+
+
 def setup_logging(name: str = "BlackDragon") -> logging.Logger:
     """Configure and return a logger that writes to blackdragon.log + GUI queue.
 
@@ -36,7 +48,7 @@ def setup_logging(name: str = "BlackDragon") -> logging.Logger:
         level=logging.WARNING,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=[
-            logging.FileHandler("blackdragon.log", encoding="utf-8"),
+            logging.FileHandler(_resolve_log_path(), encoding="utf-8"),
         ],
     )
     logger = logging.getLogger(name)

@@ -27,7 +27,7 @@ import threading
 from collections import deque
 from pathlib import Path
 
-from src.app.config import AppConfig
+from src.app.config import AppConfig, resolve_runtime_path
 
 logger = logging.getLogger("BlackDragon")
 
@@ -99,7 +99,8 @@ class AppController:
             # ADR-P5.3: 录制默认状态由 auto_record 配置决定
             state = CombatStateTracker(is_recording=self._config.auto_record)
             created["state"] = state
-            predictor = ActionPredictor(self._config.model_path)
+            predictor = ActionPredictor(
+                str(resolve_runtime_path(self._config.model_path)))
             created["predictor"] = predictor
             buffer = deque(maxlen=100)
             lock = threading.Lock()
@@ -201,10 +202,7 @@ class AppController:
           冻结模式: BlackDragon.exe       → Path(sys.executable).parent / data_dir
         保留 config.data_dir 自定义能力（绝对路径直接使用，相对路径在冻结模式基于 exe 目录）。
         """
-        path = self._config.data_dir
-        if getattr(sys, "frozen", False) and not os.path.isabs(path):
-            return Path(sys.executable).parent / path
-        return Path(path)
+        return resolve_runtime_path(self._config.data_dir)
 
     # ================= 命令（Dashboard 按钮绑定）=================
 

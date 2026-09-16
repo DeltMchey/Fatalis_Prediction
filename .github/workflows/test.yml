@@ -17,7 +17,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.11", "3.12"]
+        # 依赖钉版基线为 Python 3.12.6（见 requirements.txt / requirements-experiment.txt），
+        # CI 与开发环境保持同源，单版本矩阵
+        python-version: ["3.12"]
 
     steps:
       - name: Checkout
@@ -29,21 +31,18 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install test dependencies (cross-platform)
+      # 与本地开发环境完全同源：requirements.txt（运行时，含 v1.2.0 生产模型
+      # 所需的 xgboost/scipy）+ requirements-experiment.txt（实验工具链 flaml/psutil，
+      # test_train_automl / test_benchmark_model 需要其可导入）
+      - name: Install dependencies (runtime + experiment tooling)
         run: |
           python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-experiment.txt
           pip install pytest pytest-cov
-          # 跨平台科学计算栈
-          pip install numpy pandas scikit-learn lightgbm matplotlib joblib
-
-      - name: Install Windows-only dependencies
-        if: runner.os == 'Windows'
-        run: |
-          pip install Pymem==1.14.0 dearpygui==2.3
 
       - name: Check import — core packages
         run: |
-          python -c "import numpy, pandas, sklearn, lightgbm, matplotlib, joblib; print('Core imports OK')"
+          python -c "import numpy, pandas, sklearn, lightgbm, xgboost, matplotlib, joblib; print('Core imports OK')"
 
       - name: Run pytest with coverage
         run: |

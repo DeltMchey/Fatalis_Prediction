@@ -6,10 +6,10 @@ tags:
   - dual-process
   - BlackDragon
 created: 2026-08-04
-updated: 2026-08-04
+updated: 2026-09-16
 ---
 
-# System Architecture — BlackDragon v1.0
+# System Architecture — BlackDragon v1.2
 
 > 本文档描述**当前（P5.3 auto-start）**系统拓扑。历史架构见 `docs/legacy/architecture-v0/`。
 
@@ -64,7 +64,8 @@ DPG 2.x 使用 GLFW 作为窗口后端，GLFW 要求所有 `glfwCreateWindow()` 
 | `MonsterHunterWorld.exe` | 游戏进程（pymem 连接） |
 | `blackdragon_config.json` | 共享配置（两个进程各自独立加载） |
 | `data/` | 录制 CSV 输出目录 |
-| `models/fatalis_ai_model.pkl` | AI 模型（两个进程各自加载） |
+| `models/fatalis_ai_model.pkl` | AI 模型（XGBoost Pipeline，7.46MB；两个进程各自加载） |
+| `models/factory_model.pkl` + `.bak`/`.bak2` | 出厂不可变副本与两代备份链（v1.2.0 回滚层） |
 | `C:/Windows/Fonts/msyh.ttc` | CJK 字体（中文渲染） |
 
 ## 3. 组件交互（Mermaid）
@@ -108,35 +109,41 @@ graph TD
 ## 4. 离线管线（独立脚本，非进程内）
 
 ```
-data/fatalis_combat_data_*.csv  (17+ 个录制文件)
+data/fatalis_combat_data_*.csv  (19 个出厂文件 + 用户录制)
         │
-        ▼  data_cleaner.py  (动作合并 / 姿态追踪 / 派生提取 / 过滤)
+        ▼  data_cleaner.py  (动作合并 / 姿态追踪 / 派生提取 / 过滤 / 合并语义)
 data/ML_Ready_Dataset.csv
         │
-        ▼  train_lgbm.py  (LightGBM 多分类训练)
+        ▼  src/model/production_backend.py  (XGBoost Run B 重训, ADR-P6.1)
+        │     legacy: train_lgbm.py (--train, LightGBM)
 models/fatalis_ai_model.pkl  +  models/feature_importance.png
+  (+ .bak/.bak2 备份链, factory_model.pkl 出厂副本, sidecar meta.json, train_*.log)
 ```
+
+一键入口：`launch.py --pipeline`（Dashboard 训练按钮同一链路）。
 
 ## 5. 与 legacy 的关系
 
 | 入口 | 状态 | 说明 |
 |------|------|------|
-| `launch.py` | ✅ 推荐 | 双进程控制中心 |
-| `overlay.py` | ✅ 推荐 | 独立覆盖层进程 |
+| `launch.py` | ✅ 推荐 | 双进程控制中心（`--pipeline` 一键训练 / `--selftest` 自检） |
+| `overlay.py` | ✅ 推荐 | 独立覆盖层进程（支持 `--selftest`） |
 | `main.py` | ⚠️ legacy | P4.6 composition root（单进程 overlay） |
 | `ai_engine.py` | ⚠️ legacy | God Class，保留供 P3 测试导入与回退 |
+| `train_lgbm.py`（`--train`） | ⚠️ legacy | LightGBM 旧训练管线，向后兼容保留（ADR-P6.1） |
 
-P4 模块（`src/core/`, `src/model/`, `src/data/`, `src/ui/overlay.py`）自提取后保持零改动（dual-track 约束）。
+P4 模块（`src/core/`, `src/model/predictor.py`, `src/data/`, `src/ui/overlay.py`）对外接口自提取后保持不变；v1.2.0 在 `src/model/` 与 `src/core/` 新增的模块（features/label_decode/dataset/production_backend/backup_chain）见 [[Architecture/Module_Design|Module Design]] §2.13。
 
 ## 6. 目录映射
 
 | 目录 | 内容 | 进程 |
 |------|------|:---:|
-| `src/core/` | state_tracker, memory_reader | 双进程 |
-| `src/model/` | predictor | 双进程 |
+| `src/core/` | state_tracker, memory_reader, backup_chain | 双进程 |
+| `src/model/` | predictor, dataset, features, label_decode, production_backend, mlp_learner | 双进程 |
 | `src/data/` | recorder | 双进程 |
 | `src/ui/` | overlay, fonts | 双进程（`fonts.py` 被两个进程共享） |
 | `src/app/` | controller, config, game_service | Dashboard |
 | `src/dashboard/` | main_window, status_bar, log_view, training_panel | Dashboard |
 | `src/bootstrap/` | checker | Dashboard |
 | `src/config/` | actions, offsets | 双进程（唯一数据源） |
+| `scripts/` | train_automl, export_model, adopt_model, benchmark_model, build_exe.ps1 | 离线/构建 |

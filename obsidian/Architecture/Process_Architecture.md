@@ -6,10 +6,10 @@ tags:
   - threading
   - lifecycle
 created: 2026-08-04
-updated: 2026-08-04
+updated: 2026-09-16
 ---
 
-# Process Architecture — BlackDragon v1.0
+# Process Architecture — BlackDragon v1.2
 
 > 双进程 + 多线程模型与生命周期（基于 ADR-P5.2 / ADR-P5.3 与当前源码）。
 
@@ -80,9 +80,9 @@ sequenceDiagram
 | Main | 主线程 | DPG event loop（`Dashboard.run()`）——刷新状态栏/日志/训练/CSV/按钮 |
 | GameService | daemon | 2s 轮询游戏进程 → `attach_game` / `detach_game` |
 | Recorder | daemon | 0.1s 录制帧（仅在游戏附着后存在） |
-| Training reader | daemon | 训练子进程 stdout 轮询 → 队列（可选，训练时） |
+| Training reader | daemon | 训练子进程 stdout 轮询 → 队列（可选，训练时；v1.2.0 输出另 tee 到 `models/train_*.log`） |
 | — | 子进程 | `overlay.py`（独立进程） |
-| — | 子进程 | `train_lgbm.py`（训练时启动） |
+| — | 子进程 | 训练子进程（v1.2.0：`launch.py --pipeline` = data_cleaner → production_backend；冻结模式为同 EXE `--pipeline`） |
 
 ## 4. Overlay 进程线程模型
 
@@ -133,12 +133,12 @@ stateDiagram-v2
 |------|------|------|
 | Recording state | 独立 per-process | 每个进程自己的 `state_tracker.is_recording`；Dashboard checkbox 只控制 Dashboard 进程的 Recorder |
 | Combat data (CSV) | 各自写入 `data/` | 独立 CombatRecorder 实例，独立文件 |
-| Model status | 各自加载 `models/fatalis_ai_model.pkl` | 文件存在性检查 |
+| Model status | 各自加载 `models/fatalis_ai_model.pkl` | 文件存在性检查（v1.2.0 加载失败显示"⚠ AI 模型未加载"） |
 | Log events | `blackdragon.log` | 共享文件日志 |
 | Config | 各自独立加载 `blackdragon_config.json` | 启动时快照，运行时不同步 |
 
 ## 7. 关键约束
 
-- **P4 core 零修改**：`src/core/`, `src/model/`, `src/data/`, `main.py` 不随进程架构改动
+- **P4 core 接口不变**：`src/core/`, `src/model/predictor.py`, `src/data/`, `main.py` 的对外契约（如 `ActionPredictor.predict` 6 特征签名）不随进程/模型架构改动；v1.2.0 新增模块（features/label_decode/production_backend/backup_chain）以加性方式进入
 - **不恢复进程内 Overlay**：Overlay 始终是独立子进程（ADR-P5.2 决策）
 - **无全局状态**：跨进程通信仅通过文件（config / CSV / log），无共享内存或 IPC

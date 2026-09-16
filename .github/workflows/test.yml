@@ -16,9 +16,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # 项目为 Windows-only（pymem/Win32/PyInstaller EXE），只测目标平台。
         # 依赖钉版基线为 Python 3.12.6（见 requirements.txt / requirements-experiment.txt），
         # CI 与开发环境保持同源，单版本矩阵
+        os: [windows-latest]
         python-version: ["3.12"]
 
     steps:
